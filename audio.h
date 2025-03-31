@@ -14,11 +14,13 @@ extern AudioSynthWaveformModulated waveformMod[4];
 extern AudioEffectEnvelope envelope[4];
 extern AudioMixer4 mixer;  // Mixer to combine all voices
 extern AudioOutputI2S i2s1;
+extern AudioControlSGTL5000 sgtl5000_1;  // Audio shield
 extern AudioConnection* patchCords[12];  // 4 voices to mixer (4), mixer to left (1), mixer to right (1), plus waveform to waveformMod (4) and waveformMod to envelope (4)
 
 // Audio function declarations
 void setupAudio();
 void playNote(SynthState& state, int voice, int midiNote);
 void stopNote(int voice);
+void updateAudio(SynthState& state);
 
 #endif

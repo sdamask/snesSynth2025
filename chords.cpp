@@ -3,6 +3,9 @@
 // scale degree, and chord profile for the SNES synthesizer.
 
 #include "chords.h"
+#include "synth.h" // Include synth.h for scale definitions
+#include "debug.h"
+#include <Arduino.h>
 
 // Externally defined in synth.cpp
 extern const int SCALE_DEFINITIONS[][10];
@@ -57,7 +60,8 @@ void getChordNotes(SynthState& state, int scaleDegree, int* chordNotes, int& num
     // Get the root MIDI note for the scale degree (1-based)
     int rootIndex = (scaleDegree - 1) % scaleLength;  // 0-based index in the scale
     int rootOctaveOffset = ((scaleDegree - 1) / scaleLength) * 12;  // Octave offset
-    int rootMidiNote = state.baseNote + intervals[rootIndex] + rootOctaveOffset + state.keyOffset + state.arpeggioOffset;
+    // Calculate base MIDI note for root
+    int baseMidiNote = state.baseNote + intervals[rootIndex] + rootOctaveOffset + state.keyOffset + state.arpeggioOffset;
 
     // Get the chord definition for the current profile and scale degree
     int profileIndex = state.chordProfile;
@@ -69,19 +73,9 @@ void getChordNotes(SynthState& state, int scaleDegree, int* chordNotes, int& num
         int degree = chordDef[i];
         if (degree == 0) break;  // End of chord definition (e.g., if fewer than 4 notes)
 
-        // Calculate the scale degree relative to the current scale degree (1-based)
-        // For example, if scaleDegree is 2 (D in C major), degree 1 means D, degree 3 means F, etc.
-        int adjustedDegree = (scaleDegree - 1) + (degree - 1);  // 0-based relative degree
-        int degreeOctaveOffset = (adjustedDegree / scaleLength) * 12;  // Octave offset
-        int degreeIndex = adjustedDegree % scaleLength;  // Wrap around within the scale
-        if (degreeIndex < 0) {
-            degreeIndex += scaleLength;  // Handle negative degrees (e.g., -2)
-            degreeOctaveOffset -= 12;  // Adjust octave for negative degrees
-        }
-
-        // Calculate the MIDI note
-        int midiNote = state.baseNote + intervals[degreeIndex] + degreeOctaveOffset + state.keyOffset + state.arpeggioOffset;
-        chordNotes[i] = midiNote;
-        numNotes++;
+        // Calculate the note for this chord tone
+        int noteIndex = (rootIndex + degree - 1) % scaleLength;  // 0-based index in the scale
+        int octaveOffset = ((rootIndex + degree - 1) / scaleLength) * 12;  // Octave offset
+        chordNotes[numNotes++] = baseMidiNote + intervals[noteIndex] - intervals[rootIndex] + octaveOffset;
     }
 }

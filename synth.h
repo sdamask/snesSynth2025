@@ -7,17 +7,17 @@
 
 #include "synth_state.h"
 
-// Declare NUM_SCALES and SCALE_DEFINITIONS as extern variables
-extern const int NUM_SCALES;
-extern const int SCALE_DEFINITIONS[][10];
-// Declare MIDI constants as extern variables
-extern const int MIDI_CHANNEL;
-extern const int MIDI_VELOCITY;
+// Constants related to scales
+const int NUM_SCALES = 7;
+const int NUM_SCALE_NOTES = 10; // Max notes in a scale definition (including -1 terminator)
+extern const int SCALE_DEFINITIONS[NUM_SCALES][NUM_SCALE_NOTES];
 
+// Function declarations
 void initializeSynthState(SynthState& state);
 void updateScale(SynthState& state);
-void handleMonophonicPlayStyle(SynthState& state);
-void sendMidiNoteOn(int note, int velocity, int channel);
-void sendMidiNoteOff(int note, int velocity, int channel);
+// Remove playstyle handlers if they were declared here, they belong in playstyles.h
+// void handleMonophonic(SynthState& state); 
+// void handlePolyphonic(SynthState& state);
+// void handleChordButton(SynthState& state);
 
-#endif
+#endif // SYNTH_H

@@ -5,6 +5,7 @@
 #define CONTROLLER_H
 
 #include "synth_state.h"
+#include "button_defs.h"  // Include button definitions
 
 // Pin definitions for SNES controller
 #define SNES_DATA 4

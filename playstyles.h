@@ -6,8 +6,15 @@
 #define PLAYSTYLES_H
 
 #include "synth_state.h"
+#include "midi.h"
 
-void handleMonophonicPlayStyle(SynthState& state);
-void handleChordButtonPlayStyle(SynthState& state);
+// Constants for MIDI
+extern const int MIDI_CHANNEL;
+extern const int MIDI_VELOCITY;
+
+// Renamed functions to match calls in main.ino
+void handleMonophonic(SynthState& state);
+void handleChordButton(SynthState& state);
+void handlePolyphonic(SynthState& state); // Add declaration for polyphonic
 
 #endif

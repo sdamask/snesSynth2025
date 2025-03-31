@@ -1,13 +1,13 @@
-// synth_state.h
-// Defines the SynthState struct, which holds the dynamic state of the SNES synthesizer,
-// including button states, scale settings, MIDI note data, and synthesizer parameters.
-
 #ifndef SYNTH_STATE_H
 #define SYNTH_STATE_H
 
-#define PRESSED 0
-#define UNPRESSED 1
+#include <Arduino.h>
+#include <stdint.h>
 
+#define MAX_NOTE_BUTTONS 10
+#define LAST_PRESS_BUFFER_SIZE 8 // Remember last 8 presses
+
+// Play styles
 enum PlayStyle {
     MONOPHONIC,
     POLYPHONIC,
@@ -15,41 +15,54 @@ enum PlayStyle {
 };
 
 struct SynthState {
-    // SNES controller state
+    // Controller state
     short snesRegister = 32767;
     short snesRegOld = 32767;
     short landing = 0;
-    int scaleOrder2[12] = { 5, 6, 4, 7, 2, 3, 1, 0, 9, 8, 10, 11 };  // Down, Left, Up, Right, Select, Start, Y, B, X, A, L, R
-    int pressed[12] = { 0 };
-    int released[12] = { 0 };
-    int held[12] = { 0 };
-    int prevHeld[12] = { 0 };
-    int orderHeld[12] = { 0 };
-    int unpressed[12] = { 0 };
-    int codeBuffer[12] = { 0 };  // Last 12 button presses
+    
+    // Button tracking
+    bool held[12] = {0};
+    bool prevHeld[12] = {0};
+    uint8_t pressed[12] = {0};
+    uint8_t released[12] = {0};
+    int lastPressedBuffer[LAST_PRESS_BUFFER_SIZE];
+    int lastPressedIndex = 0;
+    
+    // Synth state
+    int baseNote = 60;  // Middle C
+    int keyOffset = 0;  // No transposition
+    int scaleMode = 0;  // Major scale
+    int currentNote = -1;  // No note playing
+    bool needsScaleUpdate = true;
+    int scaleHolder[12];  // Computed scale notes
+    
+    // Voice tracking
+    bool voiceActive[4] = {0};  // Track which voices are active
+    int voiceToNote[4] = {-1};  // Which note each voice is playing
+    
+    // Play style
+    PlayStyle playStyle = MONOPHONIC;
+    int chordProfile = 0;  // Current chord type (major, minor, etc.)
+    bool portamentoEnabled = false;
 
-    // Polyphony and overflow (for future note playback)
-    int nowPlaying[4] = { -1, -1, -1, -1 };  // Up to 4 notes at a time
-    int waveformOpen[4] = { 1, 1, 1, 1 };    // Tracks available waveform slots
-    int waveformOverflow[4] = { -1, -1, -1, -1 };  // Overflow buffer for extra notes
-    int overflowCnt = 0;  // Number of notes in overflow
+    // MIDI and pitch control
+    int pitchBend = 0;
+    int prevPitchBend = 0;
+    int currentMidiNote = -1;
+    int currentButton = -1;
+    float currentFrequency = 0.0;
+    
+    // Chord state
+    int currentChordNotes[4] = {-1, -1, -1, -1};
+    float currentChordFrequencies[4] = {0.0, 0.0, 0.0, 0.0};
+    bool waveformOpen[4] = {1, 1, 1, 1};  // 1 = open (no sound), 0 = closed (playing)
+    
+    // Additional state
+    int arpeggioOffset = 0;
+    char codeBuffer[32];  // For debug messages
 
-    // Synthesizer state
-    PlayStyle playStyle = MONOPHONIC;  // Default to monophonic playStyle
-    int scaleMode = 0;  // Diatonic scale/musical mode (0 = Major, 1 = Pentatonic, etc.)
-    int scaleHolder[16] = { 0 };  // Computed scale notes
-    int baseNote;  // Base MIDI note for the scale (e.g., 60 = C3), initialized in synth.cpp
-    int keyOffset;  // Chromatic key transposition (0 = C, 1 = C#, etc.), initialized in synth.cpp
-    int arpeggioOffset = 0;  // Offset for arpeggio octave swings (e.g., 0, 12, 24)
-    int currentButton = -1;  // Button currently playing a note (for monophonic)
-    int currentMidiNote = -1;  // MIDI note currently playing (for monophonic)
-    int currentChordNotes[4] = { -1, -1, -1, -1 };  // MIDI notes of the current chord (for ChordButton)
-    float currentChordFrequencies[4] = { 0.0, 0.0, 0.0, 0.0 };  // Frequencies of the current chord notes (for portamento)
-    int chordProfile = 0;  // Current chord profile index (for ChordButton)
-    int pitchBend = 0;  // Octave offset in semitones (+12 per octave up, -12 per octave down)
-    bool portamentoEnabled = false;  // Toggle between immediate and portamento pitch changes
-    float currentFrequency = 0.0;  // Current frequency for portamento (for monophonic)
-    float degToRad = 3.14 / 180;  // For portamento sine curve (from your original code)
+    // Command handling flag
+    bool commandJustExecuted = false; // Set to true by checkCommands if a combo was handled
 };
 
-#endif
+#endif // SYNTH_STATE_H

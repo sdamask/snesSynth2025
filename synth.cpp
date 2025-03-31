@@ -4,21 +4,26 @@
 
 #include "synth.h"
 #include "audio.h"
-#include "midi_utils.h"
-#include <Arduino.h>  // For Serial, delay, sin, etc.
+#include "debug.h"
+#include <Arduino.h>
 
 // Global scale definitions
-const int SCALE_DEFINITIONS[4][10] = {
-    { 0, 2, 4, 5, 7, 9, 11, -1 },  // Major (C, D, E, F, G, A, B)
-    { 0, 2, 4, 7, 9, -1 },         // Major Pentatonic (C, D, E, G, A)
-    { 0, 2, 3, 5, 7, 9, 10, -1 },  // Dorian (C, D, Eb, F, G, A, Bb)
-    { 0, 1, 3, 5, 7, 8, 10, -1 }   // Phrygian (C, Db, Eb, F, G, Ab, Bb)
+// Match dimensions from synth.h: NUM_SCALES x NUM_SCALE_NOTES (7x10)
+const int SCALE_DEFINITIONS[NUM_SCALES][NUM_SCALE_NOTES] = {
+    { 0, 2, 4, 5, 7, 9, 11, -1 },     // Major (8 elements, fits in 10)
+    { 0, 2, 3, 5, 7, 8, 10, -1 },     // Natural Minor (8 elements)
+    { 0, 2, 3, 5, 7, 8, 11, -1 },     // Harmonic Minor (8 elements)
+    { 0, 2, 3, 5, 7, 9, 11, -1 },     // Melodic Minor (8 elements)
+    { 0, 2, 4, 6, 7, 9, 11, -1 },     // Lydian (8 elements)
+    { 0, 2, 4, 5, 7, 9, 10, -1 },     // Mixolydian (8 elements)
+    { 0, 2, 3, 5, 7, 8, 10, -1 }      // Dorian (8 elements)
+    // C++ initializes remaining elements in each row to 0 automatically, which is fine
+    // as the -1 terminator is encountered first.
 };
-const int NUM_SCALES = sizeof(SCALE_DEFINITIONS) / sizeof(SCALE_DEFINITIONS[0]);
 
 // Default values for baseNote and keyOffset
-const int DEFAULT_BASE_NOTE = 60;  // C3
-const int DEFAULT_KEY_OFFSET = 0;  // No transposition (C)
+const int DEFAULT_BASE_NOTE = 60;  // Middle C
+const int DEFAULT_KEY_OFFSET = 0;  // No transposition
 
 // MIDI channel (1-16, default to channel 1)
 const int MIDI_CHANNEL = 1;
@@ -27,44 +32,47 @@ const int MIDI_VELOCITY = 100;
 
 // Initialize SynthState with default values
 void initializeSynthState(SynthState& state) {
-    state.baseNote = DEFAULT_BASE_NOTE;
-    state.keyOffset = DEFAULT_KEY_OFFSET;
-}
-
-void sendMidiNoteOn(int note, int velocity, int channel) {
-    Serial.print("Sending MIDI Note On: ");
-    Serial.print(note);
-    Serial.print(", Velocity: ");
-    Serial.println(velocity);
-    usbMIDI.sendNoteOn(note, velocity, channel);
-}
-
-void sendMidiNoteOff(int note, int velocity, int channel) {
-    Serial.print("Sending MIDI Note Off: ");
-    Serial.print(note);
-    Serial.print(", Velocity: ");
-    Serial.println(velocity);
-    usbMIDI.sendNoteOff(note, velocity, channel);
+    state.baseNote = DEFAULT_BASE_NOTE;  // Middle C
+    state.keyOffset = DEFAULT_KEY_OFFSET;  // No transposition
+    state.playStyle = MONOPHONIC;
+    state.needsScaleUpdate = true;
+    state.portamentoEnabled = false;
+    
+    // Initialize arrays
+    for (int i = 0; i < 12; i++) {
+        state.held[i] = 0;
+        state.prevHeld[i] = 0;
+        state.pressed[i] = 0;
+        state.released[i] = 0;
+    }
+    // Initialize last pressed buffer (e.g., with -1)
+    for (int i = 0; i < LAST_PRESS_BUFFER_SIZE; ++i) {
+        state.lastPressedBuffer[i] = -1;
+    }
+    state.lastPressedIndex = 0;
+    
+    updateScale(state);
 }
 
 void updateScale(SynthState& state) {
-    // Select the scale based on scaleMode (default to Major if out of range)
-    int scaleIndex = (state.scaleMode >= 0 && state.scaleMode < NUM_SCALES) ? state.scaleMode : 0;
-    const int* intervals = SCALE_DEFINITIONS[scaleIndex];
-
-    // Calculate the scale length by finding the -1 terminator
+    if (!state.needsScaleUpdate) return;
+    
+    // Get current scale intervals
+    const int* intervals = SCALE_DEFINITIONS[state.scaleMode];
+    
+    // Calculate scale length
     int scaleLength = 0;
-    for (int i = 0; i < 10; i++) {
-        if (intervals[i] == -1) {
-            scaleLength = i;
-            break;
-        }
+    while (intervals[scaleLength] != -1 && scaleLength < 10) {
+        scaleLength++;
     }
-
-    // Generate MIDI notes dynamically
-    for (int i = 0; i < 10; i++) {
-        int degree = i % scaleLength;  // Repeat the scale after scaleLength notes
-        int octaveOffset = (i / scaleLength) * 12;  // Add 12 semitones for each octave
-        state.scaleHolder[i] = state.baseNote + intervals[degree] + octaveOffset + state.keyOffset + state.arpeggioOffset;
+    
+    // Fill scale holder with actual MIDI notes
+    for (int i = 0; i < 12; i++) {
+        int octave = i / scaleLength;
+        int degree = i % scaleLength;
+        state.scaleHolder[i] = state.baseNote + intervals[degree] + (octave * 12) + state.keyOffset;
     }
+    
+    state.needsScaleUpdate = false;
 }
+

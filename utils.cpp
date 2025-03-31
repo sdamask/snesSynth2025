@@ -3,7 +3,13 @@
 // the current state (e.g., playstyle, key, scale, MIDI note) to the Serial monitor.
 
 #include "utils.h"
+#include "button_defs.h" // Include for BTN_ defines
 #include <Arduino.h>
+
+// Array to map BTN_ index to readable names (for printing)
+const char* buttonNames[12] = {
+    "B", "Y", "Sel", "St", "Up", "Down", "Left", "Right", "A", "X", "L", "R"
+};
 
 void printStatus(SynthState& state) {
     Serial.println("**********");
@@ -101,37 +107,49 @@ void printStatus(SynthState& state) {
         }
     }
 
-    Serial.print("Pressed:   ");
-    for (int i = 0; i <= 11; i++) {
-        Serial.print(state.pressed[i]);
-    }
-    Serial.println();
+    // Serial.print("Pressed:   "); // REMOVED
+    // for (int i = 0; i < MAX_NOTE_BUTTONS; i++) {
+    //     Serial.print(state.pressed[i]);
+    // }
+    // Serial.println();
 
-    Serial.print("Released:  ");
-    for (int i = 0; i <= 11; i++) {
-        Serial.print(state.released[i]);
-    }
-    Serial.println();
+    // Serial.print("Released:  "); // REMOVED
+    // for (int i = 0; i < MAX_NOTE_BUTTONS; i++) {
+    //     Serial.print(state.released[i]);
+    // }
+    // Serial.println();
 
-    Serial.print("Held:      ");
-    for (int i = 0; i <= 11; i++) {
+    Serial.print("Held:      "); // Add Held status line
+    for (int i = 0; i < 12; i++) { // Loop 0-11 to include L/R
         Serial.print(state.held[i]);
     }
     Serial.println();
-
-    Serial.print("orderHeld: ");
-    for (int i = 0; i <= 11; i++) {
-        Serial.print(state.orderHeld[i]);
-    }
-    Serial.println();
-
-    Serial.print("codeBuffer[]: ");
-    for (int i = 0; i <= 11; i++) {
-        Serial.print(state.codeBuffer[i]);
-        if (i < 11) {
+    
+    // Serial.print("OrderHeld: ");
+    // for (int i = 0; i < 12; i++) {
+    //     Serial.print(state.orderHeld[i]);
+    //     if (i < 11) Serial.print(" ");
+    // }
+    // Serial.println();
+    
+    Serial.print("Last Pressed Buf (idx ");
+    Serial.print(state.lastPressedIndex);
+    Serial.print("): [ ");
+    // Print buffer contents from newest to oldest
+    for (int i = 0; i < LAST_PRESS_BUFFER_SIZE; i++) { 
+        // Calculate index to read, starting from last written and going back
+        int readIndex = (state.lastPressedIndex + LAST_PRESS_BUFFER_SIZE - 1 - i) % LAST_PRESS_BUFFER_SIZE;
+        int btnIndex = state.lastPressedBuffer[readIndex];
+        if (btnIndex >= 0 && btnIndex < 12) { // Check if index is valid
+             Serial.print(buttonNames[btnIndex]); // Print name
+        } else {
+             Serial.print("?"); // Print placeholder for invalid/unset
+        }
+        
+        if (i < LAST_PRESS_BUFFER_SIZE - 1) {
             Serial.print(", ");
         }
     }
-    Serial.println();
+    Serial.println(" ]"); // Add closing bracket
     Serial.println("**********");
 }

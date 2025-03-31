@@ -6,7 +6,10 @@
 #define COMMANDS_H
 
 #include "synth_state.h"
+#include <Arduino.h>
 
+// Function declarations
+void handleSerialCommand(String command, SynthState& state);
 void checkCommands(SynthState& state);
 
-#endif
+#endif // COMMANDS_H
