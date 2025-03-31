@@ -1,8 +1,5 @@
 # SNES Synth Controller
 
-![SNES Controller](https://upload.wikimedia.org/wikipedia/commons/thumb/3/31/SNES_controller.jpg/320px-SNES_controller.jpg)
-*(Image: Wikimedia Commons)*
-
 ## Description
 
 This project transforms a classic Super Nintendo (SNES) controller into a versatile musical synthesizer and MIDI controller. Using a Teensy 3.2 microcontroller and the Teensy Audio Shield, it allows real-time performance with both an internal synth engine and external MIDI devices.
