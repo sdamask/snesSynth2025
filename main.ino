@@ -84,25 +84,16 @@ void loop() {
         }
     } // else: Skip playstyle handler this cycle because a command took priority
 
-    // Check for changes in held state (only for note buttons 0-9)
-    bool buttonPressedThisFrame = false; // Flag specifically for press events
-    for (int i = 0; i < MAX_NOTE_BUTTONS; i++) { // Check only 0-9
-        if (state.pressed[i]) { // Check the .pressed array directly
-            buttonPressedThisFrame = true;
-            break;
-        }
-    }
-
     unsigned long currentTime = millis();
 
-    // If a button was pressed, start the debounce/cooldown timer for printing
-    if (buttonPressedThisFrame) {
+    // If a command was executed this frame, flag that a print is pending
+    if (state.commandJustExecuted) {
         lastHeldChangeTime = currentTime; // Use the same timer variable for simplicity
         pendingPrint = true;
-        DEBUG_DEBUG(CAT_BUTTON, "Button pressed, print pending");
+        DEBUG_DEBUG(CAT_COMMAND, "Command executed, print pending");
     }
 
-    // If enough time has passed since the last PRESS and there's a pending print
+    // If enough time has passed since the last COMMAND and there's a pending print
     if (pendingPrint && (currentTime - lastHeldChangeTime >= debouncePeriod)) {
         // Only print if enough time has passed since the last print (cooldown)
         if (currentTime - lastPrintTime >= printCooldown) {

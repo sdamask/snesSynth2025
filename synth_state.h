@@ -44,6 +44,9 @@ struct SynthState {
     PlayStyle playStyle = MONOPHONIC;
     int chordProfile = 0;  // Current chord type (major, minor, etc.)
     bool portamentoEnabled = false;
+    int currentWaveform = 0; // 0: Sine, 1: Saw, 2: Square, 3: Triangle
+    int vibratoRate = 0;     // 0=Off, 1=5Hz, 2=10Hz
+    int vibratoDepth = 0;    // 0=Off, 1=Low, 2=Medium, 3=High
 
     // MIDI and pitch control
     int pitchBend = 0;

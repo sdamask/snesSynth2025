@@ -37,6 +37,9 @@ void initializeSynthState(SynthState& state) {
     state.playStyle = MONOPHONIC;
     state.needsScaleUpdate = true;
     state.portamentoEnabled = false;
+    state.currentWaveform = 0; // Default to Sine
+    state.vibratoRate = 1;     // Default to 5Hz (Index 1)
+    state.vibratoDepth = 2;    // Default to Medium (Index 2)
     
     // Initialize arrays
     for (int i = 0; i < 12; i++) {

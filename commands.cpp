@@ -54,6 +54,39 @@ void handleSerialCommand(String command, SynthState& state) {
         state.portamentoEnabled = !state.portamentoEnabled;
         DEBUG_INFO(CAT_COMMAND, "Portamento %s", state.portamentoEnabled ? "enabled" : "disabled");
     }
+    else if (command.startsWith("waveform")) {
+        // Format: waveform <type_index>
+        int newWaveform = command.substring(9).toInt();
+        // Assuming 4 waveforms for now (0-3)
+        if (newWaveform >= 0 && newWaveform < 4) { 
+            state.currentWaveform = newWaveform;
+            DEBUG_INFO(CAT_COMMAND, "Waveform changed to %d", newWaveform);
+            // Apply the change immediately (optional, depends on where waveform is set)
+            // applyWaveformChange(state); // We'll handle this in playNote or audio setup
+        } else {
+            DEBUG_WARNING(CAT_COMMAND, "Invalid waveform index: %d", newWaveform);
+        }
+    }
+    else if (command.startsWith("vibrato rate")) {
+        int newRate = command.substring(13).toInt();
+        if (newRate >= 0 && newRate <= 2) { // 0=Off, 1=5Hz, 2=10Hz
+            state.vibratoRate = newRate;
+            DEBUG_INFO(CAT_COMMAND, "Vibrato Rate set to %d", newRate);
+            // Apply change later in audio code
+        } else {
+             DEBUG_WARNING(CAT_COMMAND, "Invalid vibrato rate index: %d", newRate);
+        }
+    }
+    else if (command.startsWith("vibrato depth")) {
+        int newDepth = command.substring(14).toInt();
+        if (newDepth >= 0 && newDepth <= 3) { // 0=Off, 1=Low, 2=Medium, 3=High
+            state.vibratoDepth = newDepth;
+            DEBUG_INFO(CAT_COMMAND, "Vibrato Depth set to %d", newDepth);
+             // Apply change later in audio code
+        } else {
+             DEBUG_WARNING(CAT_COMMAND, "Invalid vibrato depth index: %d", newDepth);
+        }
+    }
 }
 
 void checkCommands(SynthState& state) {
@@ -92,6 +125,45 @@ void checkCommands(SynthState& state) {
             }
             Serial.print("COMMAND: Play Style set to "); Serial.println(newStyleName); // Add confirmation
             state.commandJustExecuted = true; // Set flag
+        }
+    }
+
+    // Check for L + R + B to cycle Waveforms
+    // Indices: BTN_L=10, BTN_R=11, BTN_B=0
+    if (state.held[BTN_L] && state.held[BTN_R] && state.held[BTN_B]) { 
+        // Trigger only when B is newly pressed while L and R are already held
+        if (!state.prevHeld[BTN_B]) {
+            state.currentWaveform = (state.currentWaveform + 1) % 4; // Cycle through 0, 1, 2, 3
+            const char* waveformNames[] = {"Sine", "Sawtooth", "Square", "Triangle"};
+            DEBUG_INFO(CAT_COMMAND, "Waveform changed to %d (%s) via button combo", state.currentWaveform, waveformNames[state.currentWaveform]);
+            Serial.print("COMMAND: Waveform set to "); Serial.println(waveformNames[state.currentWaveform]);
+            state.commandJustExecuted = true; // Set flag
+            // Apply the change immediately (optional)
+            // applyWaveformChange(state); // We'll handle this later
+        }
+    }
+
+    // Check for L + R + X to cycle Vibrato Depth (WAS Rate)
+    // Indices: BTN_L=10, BTN_R=11, BTN_X=9
+    if (state.held[BTN_L] && state.held[BTN_R] && state.held[BTN_X]) { 
+        if (!state.prevHeld[BTN_X]) {
+            state.vibratoDepth = (state.vibratoDepth + 1) % 4; // Cycle 0, 1, 2, 3 (WAS Rate)
+            const char* depthNames[] = {"Off", "Low", "Medium", "High"};
+            DEBUG_INFO(CAT_COMMAND, "Vibrato Depth changed to %d (%s) via button combo", state.vibratoDepth, depthNames[state.vibratoDepth]);
+            Serial.print("COMMAND: Vibrato Depth set to "); Serial.println(depthNames[state.vibratoDepth]);
+            state.commandJustExecuted = true; 
+        }
+    }
+
+    // Check for L + R + Y to cycle Vibrato Rate (WAS Depth)
+    // Indices: BTN_L=10, BTN_R=11, BTN_Y=1
+    if (state.held[BTN_L] && state.held[BTN_R] && state.held[BTN_Y]) { 
+        if (!state.prevHeld[BTN_Y]) {
+            state.vibratoRate = (state.vibratoRate + 1) % 3; // Cycle 0, 1, 2 (WAS Depth)
+            const char* rateNames[] = {"Off", "5Hz", "10Hz"};
+            DEBUG_INFO(CAT_COMMAND, "Vibrato Rate changed to %d (%s) via button combo", state.vibratoRate, rateNames[state.vibratoRate]);
+            Serial.print("COMMAND: Vibrato Rate set to "); Serial.println(rateNames[state.vibratoRate]);
+            state.commandJustExecuted = true; 
         }
     }
 }

@@ -142,7 +142,11 @@ void handleMonophonic(SynthState& state) {
              Serial.println("Stopping note (no buttons held or last released without retrigger)");
              stopNote(0);  // Use voice 0
              if (state.currentMidiNote != -1) {
+                 // Send specific Note Off
                  sendMidiNoteOff(state.currentMidiNote, 0, MIDI_CHANNEL);
+                 // Send MIDI All Notes Off as a fallback
+                 usbMIDI.sendControlChange(123, 0, MIDI_CHANNEL);
+                 usbMIDI.send_now();
              }
              state.currentButton = -1;
              state.currentMidiNote = -1;
@@ -277,14 +281,21 @@ void handleChordButton(SynthState& state) {
         // --- Stop Chord ---
         if (state.currentButton != -1) { 
              Serial.println("Stopping chord (button released w/o retrigger or none held)");
+            bool notesWerePlaying = false;
             for (int i = 0; i < 4; i++) {
                 if (state.currentChordNotes[i] != -1) {
+                    notesWerePlaying = true;
                     stopNote(i);
                     sendMidiNoteOff(state.currentChordNotes[i], 0, MIDI_CHANNEL); 
                     state.currentChordNotes[i] = -1;
                     state.currentChordFrequencies[i] = 0.0;
                     state.waveformOpen[i] = 1;
                 }
+            }
+            // Send MIDI All Notes Off if any notes were stopped
+            if (notesWerePlaying) {
+                usbMIDI.sendControlChange(123, 0, MIDI_CHANNEL);
+                usbMIDI.send_now();
             }
             state.currentButton = -1; 
         }

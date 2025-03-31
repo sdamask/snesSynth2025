@@ -69,13 +69,40 @@ void getChordNotes(SynthState& state, int scaleDegree, int* chordNotes, int& num
 
     // Calculate the MIDI notes for the chord
     numNotes = 0;
+    Serial.println("--- Calculating Chord Notes ---"); // DEBUG START
+    Serial.print("  ScaleDeg: "); Serial.print(scaleDegree);
+    Serial.print(", Profile: "); Serial.print(profileIndex);
+    Serial.print(", RootIdx: "); Serial.print(rootIndex);
+    Serial.print(", ScaleLen: "); Serial.print(scaleLength);
+    Serial.print(", BaseMIDI: "); Serial.println(baseMidiNote);
+    
     for (int i = 0; i < 4; i++) {
         int degree = chordDef[i];
-        if (degree == 0) break;  // End of chord definition (e.g., if fewer than 4 notes)
+        Serial.print("  ChordTone "); Serial.print(i);
+        Serial.print(": RelDegree= "); Serial.print(degree);
 
-        // Calculate the note for this chord tone
-        int noteIndex = (rootIndex + degree - 1) % scaleLength;  // 0-based index in the scale
-        int octaveOffset = ((rootIndex + degree - 1) / scaleLength) * 12;  // Octave offset
+        if (degree == 0) { // Using 0 as terminator now based on definition
+            Serial.println(" -> Chord Definition End");
+            break;  
+        }
+
+        // Calculate the note index and octave offset for this chord tone
+        int scaleNoteLookup = rootIndex + degree - 1;
+        int noteIndex = scaleNoteLookup % scaleLength;
+        int octaveOffset = (scaleNoteLookup / scaleLength) * 12;
+        Serial.print(", ScaleNoteLookup= "); Serial.print(scaleNoteLookup);
+        Serial.print(", NoteIdx= "); Serial.print(noteIndex);
+        Serial.print(", OctOffset= "); Serial.println(octaveOffset);
+
+        // BOUNDS CHECK before accessing intervals
+        if (noteIndex < 0 || noteIndex >= scaleLength || rootIndex < 0 || rootIndex >= scaleLength) {
+             Serial.println("  *** ERROR: Calculated index out of bounds for scale intervals! ***");
+             chordNotes[numNotes++] = -1; // Assign invalid note
+             continue; // Skip to next chord tone
+        }
+        
         chordNotes[numNotes++] = baseMidiNote + intervals[noteIndex] - intervals[rootIndex] + octaveOffset;
+        Serial.print("    -> Final MIDI: "); Serial.println(chordNotes[numNotes-1]);
     }
+    Serial.println("--- Chord Calculation End ---"); // DEBUG END
 }

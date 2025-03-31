@@ -8,14 +8,15 @@
 #include <Audio.h>
 #include "synth_state.h"
 
-// Declare audio objects (4 voices)
+// Forward declarations for audio components
 extern AudioSynthWaveform waveform[4];
 extern AudioSynthWaveformModulated waveformMod[4];
 extern AudioEffectEnvelope envelope[4];
+extern AudioSynthWaveform lfo[4];
 extern AudioMixer4 mixer;  // Mixer to combine all voices
 extern AudioOutputI2S i2s1;
 extern AudioControlSGTL5000 sgtl5000_1;  // Audio shield
-extern AudioConnection* patchCords[12];  // 4 voices to mixer (4), mixer to left (1), mixer to right (1), plus waveform to waveformMod (4) and waveformMod to envelope (4)
+extern AudioConnection* patchCords[16];  // 4 voices to mixer (4), mixer to left (1), mixer to right (1), plus waveform to waveformMod (4) and waveformMod to envelope (4)
 
 // Audio function declarations
 void setupAudio();
