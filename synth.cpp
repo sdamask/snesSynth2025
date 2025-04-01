@@ -55,6 +55,20 @@ void initializeSynthState(SynthState& state) {
     }
     state.lastPressedIndex = 0;
     
+    // Initialize MIDI sync and boogie mode
+    state.midiSyncEnabled = false;
+    state.midiClockCount = 0;
+    state.lastQuarterNoteTime = 0;
+    state.midiTempo = 120;  // Default 120 BPM
+    state.boogieModeEnabled = true; // Default Boogie Mode ON for testing
+    state.boogieLActive = false;
+    state.boogieRActive = false;
+    state.currentBeat = 0;
+    state.lastBoogieMidiNote = -1; // Initialize to -1 (no note playing)
+    state.boogieRTickValue = 16; // Default R tick (swing)
+
+    // Initialize debug system
+    
     updateScale(state);
 }
 

@@ -1,0 +1,22 @@
+*.elf
+*.hex
+*.eep
+*.bin
+*.map
+
+# Arduino libraries
+lib/
+
+# Build files
+.build/
+build-*
+*.o
+*.d
+
+# PlatformIO specific
+.pio/
+.vscode/
+
+# Processing GUI build files
+gui/build/
+gui/build-tmp/ 

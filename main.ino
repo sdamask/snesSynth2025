@@ -18,6 +18,13 @@ unsigned long lastHeldChangeTime = 0;
 const unsigned long debouncePeriod = 20;  // 20ms debounce period
 bool pendingPrint = false;
 
+// Forward declarations
+void handleSerialCommand(String command, SynthState& state);
+void processMidiTick(SynthState& state); // Renamed from handleMidiClock
+void handleClock();
+void handleStart();
+void handleStop();
+
 void setup() {
     // Initialize Serial communication
     setupDebug(9600); 
@@ -40,14 +47,18 @@ void setup() {
 
     // Setup MIDI handlers
     usbMIDI.setHandleNoteOn(OnNoteOn);
+    usbMIDI.setHandleControlChange(OnControlChange); // Ensure CC handler is set
+    usbMIDI.setHandleClock(handleClock);
+    usbMIDI.setHandleStart(handleStart);
+    usbMIDI.setHandleStop(handleStop);
 }
 
 void loop() {
     // Reset command flag at start of loop
     state.commandJustExecuted = false;
 
-    // Read USB MIDI messages
-    usbMIDI.read();
+    // Read USB MIDI messages - Calls handleClock, handleStart, handleStop internally
+    usbMIDI.read(); 
 
     // Check for Serial commands from Processing (GUI)
     if (Serial.available() > 0) {
@@ -115,31 +126,47 @@ void loop() {
     yield();  // Allow other tasks to run if needed
 }
 
+// MIDI Clock/System Realtime Callbacks
+void handleClock() {
+    // Called by usbMIDI.read() 24 times per quarter note
+    DEBUG_VERBOSE(CAT_MIDI, "MIDI Clock Tick Received");
+    
+    // Only process if sync is enabled (MIDI Start received)
+    if (state.midiSyncEnabled) {
+        // Increment our internal counter first
+        state.midiClockCount = (state.midiClockCount + 1) % 24; // Increment and wrap at 24
+        
+        // Now process the logic based on this tick
+        processMidiTick(state);
+    } 
+}
+
+void handleStart() {
+    DEBUG_INFO(CAT_MIDI, "MIDI Start Received");
+    state.midiClockCount = 0;
+    state.currentBeat = 0;
+    state.lastQuarterNoteTime = millis();
+    state.midiSyncEnabled = true; // Enable processing
+}
+
+void handleStop() {
+    DEBUG_INFO(CAT_MIDI, "MIDI Stop Received");
+    state.midiSyncEnabled = false; // Disable processing
+    // Maybe stop boogie notes if needed
+    if (state.lastBoogieMidiNote != -1) {
+        sendMidiNoteOff(state.lastBoogieMidiNote, 0, MIDI_CHANNEL);
+        stopNote(0); 
+        state.lastBoogieMidiNote = -1;
+    }
+}
+
+// MIDI Note/CC Handlers
 void OnNoteOn(byte channel, byte note, byte velocity) {
-    // To be implemented later
+    // Implement later if needed for external MIDI input
+    DEBUG_DEBUG(CAT_MIDI, "MIDI Note On: Chan=%d Note=%d Vel=%d", channel, note, velocity);
 }
 
 void OnControlChange(byte channel, byte control, byte value) {
-    if (channel == 1) {  // Only respond to channel 1
-        switch (control) {
-            case 20:  // CC 20: Change scale mode
-                state.scaleMode = map(value, 0, 127, 0, 6);  // 7 scales (0-6)
-                state.needsScaleUpdate = true;  // Mark for update
-                Serial.print("Scale Mode Changed to: ");
-                Serial.println(state.scaleMode);
-                break;
-            case 21:  // CC 21: Change base note
-                state.baseNote = map(value, 0, 127, 36, 84);  // Map to 3 octaves around middle C
-                state.needsScaleUpdate = true;  // Mark for update
-                Serial.print("Base Note Changed to: ");
-                Serial.println(state.baseNote);
-                break;
-            case 22:  // CC 22: Change keyOffset
-                state.keyOffset = map(value, 0, 127, 0, 11);  // Map 0-127 to 0-11 semitones
-                state.needsScaleUpdate = true;  // Mark for update
-                Serial.print("Key Offset Changed to: ");
-                Serial.println(state.keyOffset);
-                break;
-        }
-    }
+    // Implement later if needed
+    DEBUG_DEBUG(CAT_MIDI, "MIDI CC: Chan=%d Ctrl=%d Val=%d", channel, control, value);
 }

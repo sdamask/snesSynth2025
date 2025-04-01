@@ -71,6 +71,20 @@ struct SynthState {
 
     // Command handling flag
     bool commandJustExecuted = false; // Set to true by checkCommands if a combo was handled
+
+    // MIDI Sync and Boogie Mode
+    bool midiSyncEnabled;
+    uint32_t midiClockCount;
+    uint32_t lastQuarterNoteTime;
+    uint32_t midiTempo;  // in BPM
+    bool boogieModeEnabled;
+    bool boogieLActive; // Set by playstyles based on held[BTN_L]
+    bool boogieRActive; // Set by playstyles based on held[BTN_R]
+    uint8_t currentBeat;  // 0-3 for 4/4 time
+    int lastBoogieMidiNote; // Track the last note played by boogie mode
+    int boogieRTickValue; // Tick for the R note (swing)
+
+    // Constructor
 };
 
 #endif // SYNTH_STATE_H

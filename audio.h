@@ -24,4 +24,8 @@ void playNote(SynthState& state, int voice, int midiNote);
 void stopNote(int voice);
 void updateAudio(SynthState& state);
 
+// MIDI Clock and Boogie Mode
+void processMidiTick(SynthState& state);
+int getBaseMidiNote(SynthState& state);
+
 #endif

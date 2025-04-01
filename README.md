@@ -63,6 +63,7 @@ The goal is to provide an intuitive and fun interface for musical expression, le
     *   **L+R+X:** Press X while holding L+R to cycle Vibrato Depth (Off, Low, Medium, High).
     *   **L+R+Y:** Press Y while holding L+R to cycle Vibrato Rate (Off, 5Hz, 10Hz).
     *   **L+R+Select:** Press Select while holding L+R to toggle between Scale Mapping and Custom Profile (e.g., Thunderstruck).
+    *   **L+R+Start:** Press Start while holding L+R to toggle Boogie Mode. In Boogie Mode, L trigger plays the first eighth note and R trigger plays the second (swung) eighth note of each quarter beat.
 4.  **Serial Commands:** Type commands into the Serial Monitor input and press Enter (examples):
     *   `scale <0-6>` (e.g., `scale 1` for Natural Minor)
     *   `base <36-84>` (e.g., `base 48` for C3)

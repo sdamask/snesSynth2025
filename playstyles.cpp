@@ -6,7 +6,9 @@
 #include "synth.h"
 #include "chords.h"
 #include "audio.h"
-#include "midi_utils.h"
+#include "utils.h"
+#include "midi.h" // Include for MIDI functions
+#include "midi_utils.h" // Add back for midiToPitchFloat
 #include "button_defs.h" // Include for BTN_ defines
 #include "synth_state.h" // Include for PROFILE_ defines
 #include "debug.h"       // Include for DEBUG_DEBUG
@@ -43,194 +45,100 @@ const int thunderstruckMidiNotes[MAX_NOTE_BUTTONS] = {
 
 // Monophonic playstyle
 void handleMonophonic(SynthState& state) {
-    // --- Update Pitch Bend based on L/R (Profile Dependent) ---
-    int currentLState = state.held[BTN_L]; // L button state (used for note trigger in TS profile)
-    int currentRState = state.held[BTN_R]; // R button state (used for pitch bend)
-    int pitchBendOffset = 0; // Initialize to 0
-
-    if (state.customProfileIndex == PROFILE_THUNDERSTRUCK) {
-        // In Thunderstruck profile, only R gives pitch bend (+12)
-        pitchBendOffset = currentRState ? 12 : 0;
-    } else {
-        // Standard profile: L=-12, R=+12, L+R=0
-        if (currentLState == 1 && currentRState == 1) {
-            pitchBendOffset = 0;
-        } else if (currentLState == 1) {
-            pitchBendOffset = -12;
-        } else if (currentRState == 1) {
-            pitchBendOffset = 12;
-        } else {
-            pitchBendOffset = 0;
-        }
-    }
-    // Store the *calculated* offset to detect changes for retriggering
-    int newPitchBend = pitchBendOffset;
-
-    // --- Detect Trigger Conditions ---
-    bool pitchBendChanged = (state.currentButton != -1 && newPitchBend != state.prevPitchBend);
-
-    // Find the *newly* pressed button (BTN_ index 0-9 for standard notes)
-    int newlyPressedButton = -1;
-    for (int btnIndex = 0; btnIndex < MAX_NOTE_BUTTONS; ++btnIndex) { // Check 0-9 first
-        if (state.pressed[btnIndex]) {
-             newlyPressedButton = btnIndex;
-             break; // Prioritize first new press found (0-9)
-        }
-    }
-
-    // Check if the button currently assigned to the note was released (can be 0-9 or L)
-    bool currentButtonReleased = (state.currentButton != -1 && state.released[state.currentButton]);
-
-    // --- Determine Next Action ---
-    int buttonToPlay = -1; // BTN_ index of the note to play next, if any (-1 means stop/do nothing)
-    bool stopCurrentNote = false;
-
-    if (newlyPressedButton != -1) {
-        // New button (0-9) pressed, play it
-        buttonToPlay = newlyPressedButton;
-        Serial.print("New Press: Button "); Serial.println(buttonToPlay);
-    } else if (currentButtonReleased) {
-        // Current button released (could be 0-9 or L). 
-        // Try buffer/fallback ONLY for buttons 0-9. L doesn't participate in retrigger.
-        int lastHeldButtonInBuffer = -1;
-        if (state.currentButton != BTN_L) { // Only check buffer if released button wasn't L
-            int readIndex = state.lastPressedIndex;
-            for (int i = 0; i < LAST_PRESS_BUFFER_SIZE; ++i) {
-                readIndex = (readIndex + LAST_PRESS_BUFFER_SIZE - 1) % LAST_PRESS_BUFFER_SIZE;
-                int bufferedButton = state.lastPressedBuffer[readIndex];
-                // Check buffer only contains buttons 0-9, held, and not the one released
-                if (bufferedButton >= 0 && bufferedButton < MAX_NOTE_BUTTONS &&
-                    state.held[bufferedButton] && bufferedButton != state.currentButton) {
-                    lastHeldButtonInBuffer = bufferedButton;
-                    break;
-                }
-            }
-        }
+    // Handle boogie mode first if enabled
+    if (state.boogieModeEnabled) {
+        // Update boogie trigger states based on current hold status
+        state.boogieLActive = state.held[BTN_L];
+        state.boogieRActive = state.held[BTN_R];
         
-        if (lastHeldButtonInBuffer != -1) {
-             buttonToPlay = lastHeldButtonInBuffer;
-             Serial.print("Retrigger (Buffer): Button "); Serial.println(buttonToPlay);
-        } else {
-            // Buffer empty or didn't apply. Fallback to lowest held (0-9 only).
-            int lowestFallbackHeld = -1;
-            for (int btnIndex = 0; btnIndex < MAX_NOTE_BUTTONS; ++btnIndex) { // Check only 0-9
-                 if (state.held[btnIndex] && btnIndex != state.currentButton) {
-                     lowestFallbackHeld = btnIndex;
-                     break;
-                 }
-            }
-            if (lowestFallbackHeld != -1) {
-                 buttonToPlay = lowestFallbackHeld;
-                 Serial.print("Retrigger (Fallback): Button "); Serial.println(buttonToPlay);
-            } else {
-                 // Fallback (0-9) failed. Check if L is held (Thunderstruck only).
-                 if (state.customProfileIndex == PROFILE_THUNDERSTRUCK && state.held[BTN_L]) {
-                     buttonToPlay = BTN_L; // Retrigger L if it's still held
-                     Serial.print("Retrigger (L Held): Button "); Serial.println(buttonToPlay);
-                 } else {
-                     // Nothing else held (0-9 or L), stop the note.
-                     stopCurrentNote = true;
-                     Serial.println("Stop Note: Button released, nothing else held");
-                 }
-            }
+        // Let handleMidiClock handle the actual note playing and MIDI messages.
+        // We don't need to explicitly stop notes here, handleMidiClock will send NoteOff.
+        return; 
+    }
+
+    // --- Standard Monophonic Mode Handling --- 
+    bool currentButtonPressed = false;
+    bool currentButtonReleased = false;
+    int buttonToPlay = -1;
+
+    // Check for currently pressed button (0-9)
+    for (int i = 0; i < MAX_NOTE_BUTTONS; i++) {
+        if (state.pressed[i]) {
+            currentButtonPressed = true;
+            buttonToPlay = i;
+            break;
         }
-    } else if (state.customProfileIndex == PROFILE_THUNDERSTRUCK && state.pressed[BTN_L]) {
-        // Special case: L pressed *by itself* (no 0-9 button pressed) in Thunderstruck profile
-        buttonToPlay = BTN_L; // Assign BTN_L index (10)
-        Serial.print("New Press: L Button (Thunderstruck) -> "); Serial.println(buttonToPlay);
-    } else if (pitchBendChanged) {
-        // Pitch bend changed while a note was held - retrigger the same button (could be 0-9 or L)
-        buttonToPlay = state.currentButton;
-        Serial.print("Retrigger (Pitch Bend): Button "); Serial.println(buttonToPlay);
-    } else {
-         // No relevant change
-         buttonToPlay = -1;
     }
 
-    // --- Execute Action ---
-    // Stop Note if necessary
-    if (stopCurrentNote && state.currentMidiNote != -1) {
-        sendMidiNoteOff(state.currentMidiNote, 0, MIDI_CHANNEL);
-        stopNote(0); // Use voice 0 for mono
-        state.currentMidiNote = -1;
-        state.currentFrequency = 0.0;
-        state.currentButton = -1;
+    // Check for released button (the one currently playing)
+    if (state.currentButton != -1 && state.released[state.currentButton]) {
+         currentButtonReleased = true;
     }
-    // Play Note if necessary
-    else if (buttonToPlay != -1)
-    {
-        int baseMidiNote; // Note before pitch bend
+    
+    // --- Handle Button Press --- 
+    if (currentButtonPressed) {
+        // Send Note Off for the previous note, if one was playing
+        if (state.currentMidiNote != -1) {
+            sendMidiNoteOff(state.currentMidiNote, 0, MIDI_CHANNEL);
+            // Don't call stopNote(0) here, playNote handles voice reuse/portamento
+        }
 
-        // *** PROFILE LOGIC ***
+        // Calculate pitch bend based on L/R triggers
+        int pitchBend = 0;
+        // Standard profile: L=-12, R=+12, L+R=0 (Thunderstruck profile L button handled separately)
+        if (state.customProfileIndex != PROFILE_THUNDERSTRUCK) {
+            if (state.held[BTN_L] && state.held[BTN_R]) pitchBend = 0;
+            else if (state.held[BTN_L]) pitchBend = -12;
+            else if (state.held[BTN_R]) pitchBend = 12;
+        } else { // Thunderstruck: Only R gives pitch bend
+             if (state.held[BTN_R]) pitchBend = 12;
+        }
+
+        // Get base MIDI note
+        int baseMidiNote = -1; 
         if (state.customProfileIndex == PROFILE_THUNDERSTRUCK) {
-            if (buttonToPlay == BTN_L) {
-                baseMidiNote = 71; // L button itself plays Open B
-                DEBUG_DEBUG(CAT_PLAYSTYLE, "Thunderstruck profile: L Button -> Base MIDI %d", baseMidiNote);
-            } else if (buttonToPlay >= 0 && buttonToPlay < MAX_NOTE_BUTTONS) { // Check button index is valid for array (0-9)
-                baseMidiNote = thunderstruckMidiNotes[buttonToPlay]; // Use mapping for buttons 0-9
-                DEBUG_DEBUG(CAT_PLAYSTYLE, "Thunderstruck profile: Button %d -> Base MIDI %d", buttonToPlay, baseMidiNote);
-            } else {
-                // Should not happen if buttonToPlay is set correctly (e.g., R button isn't assigned)
-                baseMidiNote = 0; 
-                DEBUG_WARNING(CAT_PLAYSTYLE, "Invalid buttonToPlay index in Thunderstruck profile: %d", buttonToPlay);
-            }
-        } else {
-            // Standard Scale Profile (uses buttons 0-9)
-            if (buttonToPlay >= 0 && buttonToPlay < MAX_NOTE_BUTTONS) {
-                int musicalPosition = buttonToMusicalPosition[buttonToPlay];
-                baseMidiNote = state.scaleHolder[musicalPosition];
-                DEBUG_DEBUG(CAT_PLAYSTYLE, "Scale profile: Button %d -> Pos %d -> Base MIDI %d", buttonToPlay, musicalPosition, baseMidiNote);
-            } else {
-                 baseMidiNote = 0;
-                 DEBUG_WARNING(CAT_PLAYSTYLE, "Invalid buttonToPlay index in Scale profile: %d", buttonToPlay);
-            }
+            if (buttonToPlay == BTN_L) { // Handle L button specifically in TS profile
+                 baseMidiNote = 71; // Open B
+            } else if (buttonToPlay >= 0 && buttonToPlay < MAX_NOTE_BUTTONS) {
+                 baseMidiNote = thunderstruckMidiNotes[buttonToPlay];
+            } else { return; } // Invalid button index
+        } else { // Standard Scale Profile
+             if (buttonToPlay >= 0 && buttonToPlay < MAX_NOTE_BUTTONS) {
+                 int musicalPosition = buttonToMusicalPosition[buttonToPlay];
+                 baseMidiNote = state.scaleHolder[musicalPosition];
+             } else { return; } // Invalid button index
         }
 
-        // Apply Pitch Bend (which is profile-dependent now)
-        int midiNote = baseMidiNote + pitchBendOffset;
-        DEBUG_DEBUG(CAT_PLAYSTYLE, "  -> Applied PB %d -> Final MIDI %d", pitchBendOffset, midiNote);
+        // Apply pitch bend and play note
+        if (baseMidiNote != -1) {
+            int midiNote = baseMidiNote + pitchBend;
+            if (midiNote < 0) midiNote = 0;
+            if (midiNote > 127) midiNote = 127;
 
-        // Clamp MIDI note
-        if (midiNote < 0) midiNote = 0;
-        if (midiNote > 127) midiNote = 127;
-
-        // Determine if a Note On is needed:
-        bool triggerNoteOn = (state.currentMidiNote != midiNote) || (state.currentButton != buttonToPlay);
-
-        // Send MIDI Note Off for the previous note ONLY if Note On will be triggered
-        if (state.currentMidiNote != -1 && triggerNoteOn) {
-             sendMidiNoteOff(state.currentMidiNote, 0, MIDI_CHANNEL);
+            playNote(state, 0, midiNote); // Play internal sound
+            sendMidiNoteOn(midiNote, MIDI_VELOCITY, MIDI_CHANNEL); // Send MIDI Note On
+            
+            // Update state
+            state.currentNote = midiNote; // Deprecated? Use currentMidiNote
+            state.currentMidiNote = midiNote; // Store the MIDI note being played
+            state.currentButton = buttonToPlay;
+            state.currentFrequency = midiToPitchFloat[midiNote]; // Use lookup from utils.h
         }
-
-        // Play the new note (or update pitch) if required
-        if (triggerNoteOn) {
-             // Add debug print for pitch bend retrigger
-             if (pitchBendChanged && newlyPressedButton == -1 && !currentButtonReleased) {
-                 Serial.println("-----> Retriggering due to Pitch Bend Change <-----");
-                 Serial.print("       Old MIDI Note: "); Serial.println(state.currentMidiNote);
-                 Serial.print("       New MIDI Note: "); Serial.println(midiNote);
-                 Serial.print("       Current Button: "); Serial.println(state.currentButton);
-                 Serial.print("       Button To Play: "); Serial.println(buttonToPlay);
-                 Serial.print("       Prev Pitch Bend: "); Serial.println(state.prevPitchBend);
-                 Serial.print("       New Pitch Bend: "); Serial.println(newPitchBend);
-             }
-
-             // Send MIDI Note On
-             sendMidiNoteOn(midiNote, MIDI_VELOCITY, MIDI_CHANNEL);
-             state.waveformOpen[0] = 0;
-
-             Serial.print("Playing new note (Mono): "); Serial.print(midiNote); Serial.print(" for button "); Serial.println(buttonToPlay);
-             playNote(state, 0, midiNote);  // Use voice 0
-             state.currentFrequency = midiToPitchFloat[midiNote];
-             state.currentMidiNote = midiNote; // Update the currently playing note
-        }
-        // Update the button associated with the playing note
-        state.currentButton = buttonToPlay;
     }
-
-    // Update pitchBend state and store previous value for next cycle
-    state.pitchBend = newPitchBend;
-    state.prevPitchBend = newPitchBend; // Store the *new* value as previous for the next loop
+    // --- Handle Button Release --- 
+    else if (currentButtonReleased) {
+        // Send Note Off for the released note
+        if (state.currentMidiNote != -1) {
+            sendMidiNoteOff(state.currentMidiNote, 0, MIDI_CHANNEL);
+        }
+        stopNote(0); // Stop internal sound
+        
+        // Reset state
+        state.currentNote = -1;
+        state.currentMidiNote = -1; // Mark no MIDI note playing
+        state.currentButton = -1;
+        state.currentFrequency = 0.0;
+    }
 }
 
 // ChordButton playstyle

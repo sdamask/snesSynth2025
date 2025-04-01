@@ -6,86 +6,128 @@
 #include "debug.h"
 #include "utils.h"
 #include "button_defs.h"
+#include "synth_state.h" // Needed for SynthState reference
 
 void handleSerialCommand(String command, SynthState& state) {
-    // Remove any whitespace
-    command.trim();
-    
+    command.trim(); // Remove leading/trailing whitespace
+
     if (command.startsWith("scale")) {
-        // Format: scale <number>
-        int newScale = command.substring(6).toInt();
-        if (newScale >= 0 && newScale < 7) {  // 7 scales available
-            state.scaleMode = newScale;
+        // Extract value after "scale "
+        int scaleVal = command.substring(6).toInt();
+        if (scaleVal >= 0 && scaleVal < 7) { // Assuming 7 scale modes (0-6)
+            state.scaleMode = scaleVal;
             state.needsScaleUpdate = true;
-            DEBUG_INFO(CAT_COMMAND, "Scale mode changed to %d", newScale);
+            DEBUG_INFO(CAT_COMMAND, "Scale command: Set to %d", scaleVal);
+        } else {
+            DEBUG_WARNING(CAT_COMMAND, "Scale command: Invalid value %d", scaleVal);
         }
-    }
-    else if (command.startsWith("base")) {
-        // Format: base <note>
-        int newBase = command.substring(5).toInt();
-        if (newBase >= 36 && newBase <= 84) {  // Reasonable MIDI note range
-            state.baseNote = newBase;
+    } else if (command.startsWith("base")) {
+        // Extract value after "base "
+        int baseVal = command.substring(5).toInt();
+        if (baseVal >= 36 && baseVal <= 84) { // Range check for base note
+            state.baseNote = baseVal;
             state.needsScaleUpdate = true;
-            DEBUG_INFO(CAT_COMMAND, "Base note changed to %d", newBase);
+            DEBUG_INFO(CAT_COMMAND, "Base note command: Set to %d", baseVal);
+        } else {
+            DEBUG_WARNING(CAT_COMMAND, "Base note command: Invalid value %d", baseVal);
         }
-    }
-    else if (command.startsWith("key")) {
-        // Format: key <offset>
-        int newOffset = command.substring(4).toInt();
-        if (newOffset >= 0 && newOffset < 12) {
-            state.keyOffset = newOffset;
+    } else if (command.startsWith("offset")) {
+        // Extract value after "offset "
+        int offsetVal = command.substring(7).toInt();
+        if (offsetVal >= 0 && offsetVal <= 11) { // Range check for offset
+            state.keyOffset = offsetVal;
             state.needsScaleUpdate = true;
-            DEBUG_INFO(CAT_COMMAND, "Key offset changed to %d", newOffset);
+            DEBUG_INFO(CAT_COMMAND, "Offset command: Set to %d", offsetVal);
+        } else {
+            DEBUG_WARNING(CAT_COMMAND, "Offset command: Invalid value %d", offsetVal);
         }
-    }
-    else if (command == "mono") {
+    } else if (command.startsWith("debug")) {
+        // Format: debug <CATEGORY_NAME> <LEVEL_NAME>
+        // Format: debug global <LEVEL_NAME>
+        int firstSpace = command.indexOf(' ');
+        int secondSpace = command.indexOf(' ', firstSpace + 1);
+        
+        if (firstSpace != -1 && secondSpace != -1) {
+            String categoryStr = command.substring(firstSpace + 1, secondSpace);
+            String levelStr = command.substring(secondSpace + 1);
+            categoryStr.toUpperCase();
+            levelStr.toUpperCase();
+
+            DebugLevel level = LEVEL_OFF; // Default to OFF
+            if (levelStr == "ERROR") level = LEVEL_ERROR;
+            else if (levelStr == "WARNING") level = LEVEL_WARNING;
+            else if (levelStr == "INFO") level = LEVEL_INFO;
+            else if (levelStr == "DEBUG") level = LEVEL_DEBUG;
+            else if (levelStr == "VERBOSE") level = LEVEL_VERBOSE; // Handle VERBOSE
+            else if (levelStr == "OFF") level = LEVEL_OFF; // Handle OFF
+
+            if (categoryStr == "GLOBAL") {
+                setGlobalDebugLevel(level); // Set level for all categories
+            } else {
+                // Find category index
+                int categoryIndex = -1;
+                for (int i = 0; i < CAT_COUNT; i++) {
+                    if (categoryStr == categoryNames[i]) { // Now references the extern array
+                        categoryIndex = i;
+                        break;
+                    }
+                }
+                if (categoryIndex != -1) {
+                    setDebugLevelForCategory((DebugCategory)categoryIndex, level);
+                } else {
+                    DEBUG_WARNING(CAT_COMMAND, "Debug command: Invalid category '%s'", categoryStr.c_str());
+                }
+            }
+        } else {
+            DEBUG_WARNING(CAT_COMMAND, "Debug command: Invalid format");
+        }
+     } else if (command == "mono") {
         state.playStyle = MONOPHONIC;
         DEBUG_INFO(CAT_COMMAND, "Play style set to monophonic");
-    }
-    else if (command == "poly") {
+    } else if (command == "poly") {
         state.playStyle = POLYPHONIC;
         DEBUG_INFO(CAT_COMMAND, "Play style set to polyphonic");
-    }
-    else if (command == "chord") {
+    } else if (command == "chord") {
         state.playStyle = CHORD_BUTTON;
         DEBUG_INFO(CAT_COMMAND, "Play style set to chord button");
-    }
-    else if (command == "portamento") {
+    } else if (command == "portamento") {
         state.portamentoEnabled = !state.portamentoEnabled;
         DEBUG_INFO(CAT_COMMAND, "Portamento %s", state.portamentoEnabled ? "enabled" : "disabled");
-    }
-    else if (command.startsWith("waveform")) {
-        // Format: waveform <type_index>
+    } else if (command.startsWith("waveform")) {
         int newWaveform = command.substring(9).toInt();
-        // Assuming 4 waveforms for now (0-3)
         if (newWaveform >= 0 && newWaveform < 4) { 
             state.currentWaveform = newWaveform;
             DEBUG_INFO(CAT_COMMAND, "Waveform changed to %d", newWaveform);
-            // Apply the change immediately (optional, depends on where waveform is set)
-            // applyWaveformChange(state); // We'll handle this in playNote or audio setup
         } else {
             DEBUG_WARNING(CAT_COMMAND, "Invalid waveform index: %d", newWaveform);
         }
-    }
-    else if (command.startsWith("vibrato rate")) {
+    } else if (command.startsWith("vibrato rate")) {
         int newRate = command.substring(13).toInt();
-        if (newRate >= 0 && newRate <= 2) { // 0=Off, 1=5Hz, 2=10Hz
+        if (newRate >= 0 && newRate <= 2) { 
             state.vibratoRate = newRate;
             DEBUG_INFO(CAT_COMMAND, "Vibrato Rate set to %d", newRate);
-            // Apply change later in audio code
         } else {
              DEBUG_WARNING(CAT_COMMAND, "Invalid vibrato rate index: %d", newRate);
         }
-    }
-    else if (command.startsWith("vibrato depth")) {
+    } else if (command.startsWith("vibrato depth")) {
         int newDepth = command.substring(14).toInt();
-        if (newDepth >= 0 && newDepth <= 3) { // 0=Off, 1=Low, 2=Medium, 3=High
+        if (newDepth >= 0 && newDepth <= 3) { 
             state.vibratoDepth = newDepth;
             DEBUG_INFO(CAT_COMMAND, "Vibrato Depth set to %d", newDepth);
-             // Apply change later in audio code
         } else {
              DEBUG_WARNING(CAT_COMMAND, "Invalid vibrato depth index: %d", newDepth);
         }
+    } else if (command.startsWith("boogie_r_tick")) {
+        int tickValue = command.substring(14).toInt(); // Get value after "boogie_r_tick "
+        // Add reasonable range check (e.g., 12 to 20, matching GUI slider)
+        if (tickValue >= 12 && tickValue <= 20) {
+            state.boogieRTickValue = tickValue;
+            DEBUG_INFO(CAT_COMMAND, "Boogie R Tick set to %d", state.boogieRTickValue);
+        } else {
+            DEBUG_WARNING(CAT_COMMAND, "Invalid Boogie R Tick value: %d", tickValue);
+        }
+    } else {
+        DEBUG_WARNING(CAT_COMMAND, "Unknown command: %s", command.c_str());
     }
 }
 
@@ -182,5 +224,23 @@ void checkCommands(SynthState& state) {
             }
             state.commandJustExecuted = true; 
         }
+    }
+
+    // Check for L+R+Select (Toggle Mapping Profile)
+    if (state.held[BTN_L] && state.held[BTN_R] && state.pressed[BTN_SELECT]) {
+        state.customProfileIndex = (state.customProfileIndex == PROFILE_SCALE) ? PROFILE_THUNDERSTRUCK : PROFILE_SCALE;
+        DEBUG_DEBUG(CAT_COMMAND, "Toggling Mapping Profile: %s", state.customProfileIndex == PROFILE_SCALE ? "Scale" : "Thunderstruck");
+        Serial.printf("Switched to %s Mapping\n", state.customProfileIndex == PROFILE_SCALE ? "Scale" : "Thunderstruck");
+        state.commandJustExecuted = true;
+        return;
+    }
+
+    // Check for L+R+Start (Toggle Boogie Mode)
+    if (state.held[BTN_L] && state.held[BTN_R] && state.pressed[BTN_START]) {
+        state.boogieModeEnabled = !state.boogieModeEnabled;
+        DEBUG_DEBUG(CAT_COMMAND, "Toggling Boogie Mode: %s", state.boogieModeEnabled ? "ON" : "OFF");
+        Serial.printf("Boogie Mode: %s\n", state.boogieModeEnabled ? "ON" : "OFF");
+        state.commandJustExecuted = true;
+        return;
     }
 }
