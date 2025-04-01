@@ -286,7 +286,7 @@ void processMidiTick(SynthState& state) {
              }
         }
         // --- Trigger R Note (Swung Upbeat) --- 
-        else if (r_trigger_this_tick) { // Uses updated boolean
+        else if (r_trigger_this_tick) {
              // Note Off for previous note is handled above now
              DEBUG_INFO(CAT_PLAYSTYLE, "Boogie Mode Active. Tick: %d, L: %d, R: %d", 
                     state.midiClockCount, state.boogieLActive, state.boogieRActive);
