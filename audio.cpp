@@ -93,10 +93,13 @@ void setupAudio() {
         patchCords[i*4 + 3] = new AudioConnection(envelope[i], 0, mixer, i);  // Envelope -> Mixer
     }
 
-    // Set mixer gains (lower to prevent clipping)
+    // Set mixer gains
     DEBUG_DEBUG(CAT_AUDIO, "Setting mixer gains");
-    for (int i = 0; i < 4; i++) {
-        mixer.gain(i, 0.12);  // Reduced from 0.15 to provide more headroom
+    mixer.gain(0, 0.24); // Increased gain for voice 0 (Monophonic)
+    DEBUG_DEBUG(CAT_AUDIO, "  - Mixer gain 0 set to 0.24");
+    for (int i = 1; i < 4; i++) { // Set gain for voices 1, 2, 3 (Chord/Poly)
+        mixer.gain(i, 0.12);
+        DEBUG_DEBUG(CAT_AUDIO, "  - Mixer gain %d set to 0.12", i);
     }
 
     // Route the mixer output to both left and right channels

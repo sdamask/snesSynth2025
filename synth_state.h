@@ -7,6 +7,10 @@
 #define MAX_NOTE_BUTTONS 10
 #define LAST_PRESS_BUFFER_SIZE 8 // Remember last 8 presses
 
+// Mapping Profiles
+#define PROFILE_SCALE 0
+#define PROFILE_THUNDERSTRUCK 1
+
 // Play styles
 enum PlayStyle {
     MONOPHONIC,
@@ -45,8 +49,9 @@ struct SynthState {
     int chordProfile = 0;  // Current chord type (major, minor, etc.)
     bool portamentoEnabled = false;
     int currentWaveform = 0; // 0: Sine, 1: Saw, 2: Square, 3: Triangle
-    int vibratoRate = 0;     // 0=Off, 1=5Hz, 2=10Hz
-    int vibratoDepth = 0;    // 0=Off, 1=Low, 2=Medium, 3=High
+    int vibratoRate = 1;     // Default to 5Hz (Index 1)
+    int vibratoDepth = 2;    // Default to Medium (Index 2)
+    int customProfileIndex = PROFILE_SCALE; // 0=Scale, 1=Thunderstruck, etc.
 
     // MIDI and pitch control
     int pitchBend = 0;

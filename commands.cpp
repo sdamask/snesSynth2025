@@ -166,4 +166,21 @@ void checkCommands(SynthState& state) {
             state.commandJustExecuted = true; 
         }
     }
+
+    // Check for L + R + Select to cycle Mapping Profile
+    // Indices: BTN_L=10, BTN_R=11, BTN_SELECT=2
+    if (state.held[BTN_L] && state.held[BTN_R] && state.held[BTN_SELECT]) { 
+        if (!state.prevHeld[BTN_SELECT]) {
+            if (state.customProfileIndex == PROFILE_SCALE) {
+                state.customProfileIndex = PROFILE_THUNDERSTRUCK;
+                DEBUG_INFO(CAT_COMMAND, "Mapping Profile changed to Thunderstruck via button combo");
+                Serial.println("COMMAND: Mapping Profile set to Thunderstruck");
+            } else {
+                state.customProfileIndex = PROFILE_SCALE;
+                DEBUG_INFO(CAT_COMMAND, "Mapping Profile changed to Scale via button combo");
+                Serial.println("COMMAND: Mapping Profile set to Scale");
+            }
+            state.commandJustExecuted = true; 
+        }
+    }
 }

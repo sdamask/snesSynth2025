@@ -19,25 +19,27 @@ const unsigned long debouncePeriod = 20;  // 20ms debounce period
 bool pendingPrint = false;
 
 void setup() {
-    setupDebug(9600);  // Initialize debug system first
-    DEBUG_INFO(CAT_STATE, "Starting SNES Synthesizer initialization...");
-    
-    Serial.begin(9600);
+    // Initialize Serial communication
+    setupDebug(9600); 
+
+    // Initialize the SNES controller
     setupController();
-    DEBUG_INFO(CAT_BUTTON, "Controller initialized");
-    
+    DEBUG_INFO(CAT_CONTROLLER, "Controller initialized");
+
+    // Initialize audio system
     setupAudio();
     DEBUG_INFO(CAT_AUDIO, "Audio system initialized");
-    
-    // Initialize SynthState with default values
+
+    // Initialize synth state
     initializeSynthState(state);
     DEBUG_INFO(CAT_STATE, "Synth state initialized");
-    
-    // Print initial state
+
+    // Ensure the initial scale is calculated and ready
     updateScale(state);
-    DEBUG_INFO(CAT_SCALE, "Initial scale updated");
-    printStatus(state);
-    DEBUG_INFO(CAT_STATE, "Initialization complete");
+    DEBUG_INFO(CAT_STATE, "Initial scale updated");
+
+    // Setup MIDI handlers
+    usbMIDI.setHandleNoteOn(OnNoteOn);
 }
 
 void loop() {

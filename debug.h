@@ -5,13 +5,14 @@
 
 // Debug categories
 enum DebugCategory {
+    CAT_GENERAL,
     CAT_AUDIO,
-    CAT_BUTTON,
-    CAT_COMMAND,
     CAT_MIDI,
-    CAT_SCALE,
+    CAT_CONTROLLER,
+    CAT_COMMAND,
     CAT_STATE,
-    NUM_CATEGORIES
+    CAT_PLAYSTYLE,
+    CAT_COUNT
 };
 
 // Debug levels
