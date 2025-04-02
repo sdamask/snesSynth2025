@@ -12,79 +12,52 @@ const char* buttonNames[12] = {
 };
 
 void printStatus(SynthState& state) {
-    Serial.println("**********");
-    Serial.print("playStyle: ");
+    // Print Mode
+    Serial.print("MODE:");
     switch (state.playStyle) {
-        case MONOPHONIC:
-            Serial.println("Monophonic");
-            break;
-        case POLYPHONIC:
-            Serial.println("Polyphonic");
-            break;
-        case CHORD_BUTTON:
-            Serial.println("ChordButton");
-            break;
-        default:
-            Serial.println("Unknown");
-            break;
+        case MONOPHONIC:    Serial.print("Mono"); break;
+        case POLYPHONIC:    Serial.print("Poly"); break;
+        case CHORD_BUTTON:  Serial.print("Chord"); break;
+        default:            Serial.print("?"); break;
+    }
+    if (state.midiSyncEnabled) {
+        if (state.boogieModeEnabled) Serial.print("(Boogie)");
+        else if (state.rhythmicModeEnabled) Serial.print("(Rhythm)");
     }
 
-    Serial.print("Key (keyOffset): ");
-    switch (state.keyOffset) {
-        case 0: Serial.println("C"); break;
-        case 1: Serial.println("C#"); break;
-        case 2: Serial.println("D"); break;
-        case 3: Serial.println("D#"); break;
-        case 4: Serial.println("E"); break;
-        case 5: Serial.println("F"); break;
-        case 6: Serial.println("F#"); break;
-        case 7: Serial.println("G"); break;
-        case 8: Serial.println("G#"); break;
-        case 9: Serial.println("A"); break;
-        case 10: Serial.println("A#"); break;
-        case 11: Serial.println("B"); break;
-        default: Serial.println("Unknown"); break;
+    // Print Profile
+    Serial.print(" | PROFILE:");
+    Serial.print(state.customProfileIndex == PROFILE_SCALE ? "Scale" : "Thunder");
+
+    // Print Key
+    Serial.print(" | KEY:");
+    const char* keyNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    if (state.keyOffset >= 0 && state.keyOffset < 12) {
+        Serial.print(keyNames[state.keyOffset]);
+    } else {
+        Serial.print("?");
     }
 
-    Serial.print("Scale (scaleMode): ");
-    Serial.println(state.scaleMode);
+    // Print Scale Mode
+    Serial.print(" | SCALE:");
+    Serial.print(state.scaleMode);
 
-    Serial.print("Pitch Bend (semitones): ");
-    Serial.println(state.pitchBend);
+    // Print Portamento
+    Serial.print(" | PORTA:");
+    Serial.print(state.portamentoEnabled ? "On" : "Off");
 
-    Serial.print("Portamento Enabled: ");
-    Serial.println(state.portamentoEnabled ? "True" : "False");
-
-    // Print Vibrato Status
+    // Print Vibrato
     const char* rateNames[] = {"Off", "5Hz", "10Hz"};
-    const char* depthNames[] = {"Off", "Low", "Medium", "High"};
-    Serial.print("Vibrato: ");
-    Serial.print(rateNames[state.vibratoRate]);
-    Serial.print(" / ");
-    Serial.println(depthNames[state.vibratoDepth]);
+    const char* depthNames[] = {"Off", "L", "M", "H"}; // Shortened depth names
+    Serial.print(" | VIB:");
+    if (state.vibratoRate >= 0 && state.vibratoRate < 3) Serial.print(rateNames[state.vibratoRate]); else Serial.print("?");
+    Serial.print("/");
+    if (state.vibratoDepth >= 0 && state.vibratoDepth < 4) Serial.print(depthNames[state.vibratoDepth]); else Serial.print("?");
 
-    // REMOVED Note-Specific Info
-    /*
-    // ... note info ...
-    */
+    // Print Waveform (Optional - add if desired)
+    // const char* waveformNames[] = {"Sin", "Saw", "Sqr", "Tri"};
+    // Serial.print(" | WAVE:");
+    // if (state.currentWaveform >= 0 && state.currentWaveform < 4) Serial.print(waveformNames[state.currentWaveform]); else Serial.print("?");
 
-    // REMOVED Button State Arrays
-    /*
-    Serial.print("Held:      "); 
-    for (int i = 0; i < 12; i++) { 
-        Serial.print(state.held[i]);
-    }
-    Serial.println();
-    */
-
-    // REMOVED Last Pressed Buffer Printout
-    /*
-    Serial.print("Last Pressed Buf (idx ");
-    Serial.print(state.lastPressedIndex);
-    Serial.print("): [ ");
-    // ... loop ...
-    Serial.println(" ]"); 
-    */
-
-    Serial.println("**********");
+    Serial.println(); // Finish the line
 }

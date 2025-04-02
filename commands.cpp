@@ -7,6 +7,8 @@
 #include "utils.h"
 #include "button_defs.h"
 #include "synth_state.h" // Needed for SynthState reference
+#include "midi.h" // Add for sendMidiNoteOff, MIDI_CHANNEL
+#include "audio.h" // Add for stopNote
 
 void handleSerialCommand(String command, SynthState& state) {
     command.trim(); // Remove leading/trailing whitespace
@@ -117,15 +119,80 @@ void handleSerialCommand(String command, SynthState& state) {
         } else {
              DEBUG_WARNING(CAT_COMMAND, "Invalid vibrato depth index: %d", newDepth);
         }
-    } else if (command.startsWith("boogie_r_tick")) {
-        int tickValue = command.substring(14).toInt(); // Get value after "boogie_r_tick "
-        // Add reasonable range check (e.g., 12 to 20, matching GUI slider)
-        if (tickValue >= 12 && tickValue <= 20) {
-            state.boogieRTickValue = tickValue;
-            DEBUG_INFO(CAT_COMMAND, "Boogie R Tick set to %d", state.boogieRTickValue);
+    } else if (command.startsWith("pattern")) {
+        // Format: pattern <numNotes> <totalTicks>
+        int firstSpace = command.indexOf(' ');
+        int secondSpace = command.indexOf(' ', firstSpace + 1);
+        
+        if (firstSpace != -1 && secondSpace != -1) {
+            // Extract values
+            int numNotes = command.substring(firstSpace + 1, secondSpace).toInt();
+            float totalTicks = command.substring(secondSpace + 1).toFloat();
+
+            // Validate values
+            if (numNotes >= 1 && numNotes <= state.MAX_PATTERN_NOTES && totalTicks > 0.1f) { // Basic validation
+                 DEBUG_INFO(CAT_COMMAND, "Pattern command received: N=%d, TotalTicks=%.2f", numNotes, totalTicks);
+                 
+                 // Update state
+                 state.numNotesInPattern = numNotes;
+                 state.currentRhythmPatternLengthTicks = totalTicks;
+                 float ticksPerNote = state.currentRhythmPatternLengthTicks / state.numNotesInPattern;
+                 
+                 DEBUG_INFO(CAT_COMMAND, "Recalculating pattern: %.2f ticks per note", ticksPerNote);
+                 
+                 for (int i = 0; i < state.numNotesInPattern; ++i) {
+                     state.currentRhythmPatternTicks[i] = i * ticksPerNote;
+                     state.notePlayedInCycle[i] = false; // Reset played flags
+                     DEBUG_VERBOSE(CAT_COMMAND, "  Pattern[%d] = %.2f ticks", i, state.currentRhythmPatternTicks[i]);
+                 }
+                 // Clear remaining slots
+                 for (int i = state.numNotesInPattern; i < state.MAX_PATTERN_NOTES; ++i) {
+                     state.currentRhythmPatternTicks[i] = 0.0f;
+                     state.notePlayedInCycle[i] = false;
+                 }
+                 
+                 // Reset cycle timing immediately to use new pattern
+                 state.cycleStartTimeMicros = micros(); 
+                 state.lastTickTimeMicros = micros(); // Prevent large tick duration on next clock
+                 for(int i = 0; i < state.numNotesInPattern; ++i) { state.notePlayedInCycle[i] = false; }
+
+            } else {
+                 DEBUG_WARNING(CAT_COMMAND, "Pattern command: Invalid values N=%d, TotalTicks=%.2f", numNotes, totalTicks);
+            }
         } else {
-            DEBUG_WARNING(CAT_COMMAND, "Invalid Boogie R Tick value: %d", tickValue);
+             DEBUG_WARNING(CAT_COMMAND, "Pattern command: Invalid format '%s'", command.c_str());
         }
+    } else if (command.startsWith("boogie_ratio")) {
+        // Format: boogie_ratio <float_value>
+        float ratioValue = command.substring(13).toFloat(); // Get value after "boogie_ratio "
+        // Add some basic validation (e.g., 0.0 to 1.0)
+        if (ratioValue >= 0.0f && ratioValue <= 1.0f) { 
+            state.boogieRTimingRatio = ratioValue;
+            DEBUG_INFO(CAT_COMMAND, "Boogie R Timing Ratio set to %.2f", state.boogieRTimingRatio);
+        } else {
+            DEBUG_WARNING(CAT_COMMAND, "Invalid Boogie R Timing Ratio value: %.2f", ratioValue);
+        }
+    } else if (command.startsWith("mode")) {
+        String modeName = command.substring(5); // Get name after "mode "
+        modeName.toLowerCase(); // Consistent comparison
+        if (modeName == "standard") {
+            state.boogieModeEnabled = false;
+            state.rhythmicModeEnabled = false;
+            DEBUG_INFO(CAT_COMMAND, "Mode set to Standard");
+        } else if (modeName == "boogie") {
+            state.boogieModeEnabled = true;
+            state.rhythmicModeEnabled = false;
+            DEBUG_INFO(CAT_COMMAND, "Mode set to Boogie");
+        } else if (modeName == "rhythmic") {
+            state.boogieModeEnabled = false;
+            state.rhythmicModeEnabled = true;
+            DEBUG_INFO(CAT_COMMAND, "Mode set to Rhythmic");
+        } else {
+            DEBUG_WARNING(CAT_COMMAND, "Unknown mode: %s", modeName.c_str());
+        }
+        // Stop notes from previous mode when changing via GUI
+        if (state.boogieCurrentMidiNote != -1) { DEBUG_VERBOSE(CAT_MIDI, "Stopping Boogie note on mode change (GUI)"); sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0); state.boogieCurrentMidiNote = -1; state.boogieTriggerButton = -1; state.boogieCurrentSlotIndex = -1; }
+        if (state.lastRhythmicMidiNote != -1) { DEBUG_VERBOSE(CAT_MIDI, "Stopping Rhythmic note on mode change (GUI)"); sendMidiNoteOff(state.lastRhythmicMidiNote, 0, MIDI_CHANNEL); stopNote(0); state.lastRhythmicMidiNote = -1; }
     } else {
         DEBUG_WARNING(CAT_COMMAND, "Unknown command: %s", command.c_str());
     }
@@ -209,37 +276,43 @@ void checkCommands(SynthState& state) {
         }
     }
 
-    // Check for L + R + Select to cycle Mapping Profile
-    // Indices: BTN_L=10, BTN_R=11, BTN_SELECT=2
-    if (state.held[BTN_L] && state.held[BTN_R] && state.held[BTN_SELECT]) { 
-        if (!state.prevHeld[BTN_SELECT]) {
-            if (state.customProfileIndex == PROFILE_SCALE) {
-                state.customProfileIndex = PROFILE_THUNDERSTRUCK;
-                DEBUG_INFO(CAT_COMMAND, "Mapping Profile changed to Thunderstruck via button combo");
-                Serial.println("COMMAND: Mapping Profile set to Thunderstruck");
-            } else {
-                state.customProfileIndex = PROFILE_SCALE;
-                DEBUG_INFO(CAT_COMMAND, "Mapping Profile changed to Scale via button combo");
-                Serial.println("COMMAND: Mapping Profile set to Scale");
-            }
-            state.commandJustExecuted = true; 
-        }
-    }
-
     // Check for L+R+Select (Toggle Mapping Profile)
     if (state.held[BTN_L] && state.held[BTN_R] && state.pressed[BTN_SELECT]) {
         state.customProfileIndex = (state.customProfileIndex == PROFILE_SCALE) ? PROFILE_THUNDERSTRUCK : PROFILE_SCALE;
         DEBUG_DEBUG(CAT_COMMAND, "Toggling Mapping Profile: %s", state.customProfileIndex == PROFILE_SCALE ? "Scale" : "Thunderstruck");
         Serial.printf("Switched to %s Mapping\n", state.customProfileIndex == PROFILE_SCALE ? "Scale" : "Thunderstruck");
         state.commandJustExecuted = true;
-        return;
+        return; // Ensure we exit after handling
     }
 
-    // Check for L+R+Start (Toggle Boogie Mode)
+    // Check for L+R+Start (Cycle Play Mode: Standard / Boogie / Rhythmic)
     if (state.held[BTN_L] && state.held[BTN_R] && state.pressed[BTN_START]) {
-        state.boogieModeEnabled = !state.boogieModeEnabled;
-        DEBUG_DEBUG(CAT_COMMAND, "Toggling Boogie Mode: %s", state.boogieModeEnabled ? "ON" : "OFF");
-        Serial.printf("Boogie Mode: %s\n", state.boogieModeEnabled ? "ON" : "OFF");
+        // Always cycle the mode regardless of MIDI clock status
+        if (!state.boogieModeEnabled && !state.rhythmicModeEnabled) {
+            // Currently Standard -> Switch to Boogie
+            state.boogieModeEnabled = true;
+            state.rhythmicModeEnabled = false;
+            Serial.print("MODE: Boogie");
+            if (!state.midiSyncEnabled) Serial.print(" (MIDI Clock Inactive)"); // Warn if inactive
+            Serial.println();
+        } else if (state.boogieModeEnabled) {
+            // Currently Boogie -> Switch to Rhythmic
+            state.boogieModeEnabled = false;
+            state.rhythmicModeEnabled = true;
+            Serial.print("MODE: Rhythmic Pattern");
+            if (!state.midiSyncEnabled) Serial.print(" (MIDI Clock Inactive)"); // Warn if inactive
+            Serial.println();
+        } else { // Currently Rhythmic -> Switch to Standard
+            state.boogieModeEnabled = false;
+            state.rhythmicModeEnabled = false;
+            Serial.println("MODE: Standard Play");
+        }
+        DEBUG_DEBUG(CAT_COMMAND, "Cycled Mode: Boogie=%d, Rhythmic=%d", state.boogieModeEnabled, state.rhythmicModeEnabled);
+        
+        // Ensure previous mode notes are stopped regardless of clock status
+        if (state.boogieCurrentMidiNote != -1) { DEBUG_VERBOSE(CAT_MIDI, "Stopping Boogie note on mode change"); sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0); state.boogieCurrentMidiNote = -1; state.boogieTriggerButton = -1; state.boogieCurrentSlotIndex = -1; }
+        if (state.lastRhythmicMidiNote != -1) { DEBUG_VERBOSE(CAT_MIDI, "Stopping Rhythmic note on mode change"); sendMidiNoteOff(state.lastRhythmicMidiNote, 0, MIDI_CHANNEL); stopNote(0); state.lastRhythmicMidiNote = -1; }
+        
         state.commandJustExecuted = true;
         return;
     }

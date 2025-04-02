@@ -22,6 +22,7 @@ extern const int buttonToMusicalPosition[MAX_NOTE_BUTTONS];
 // Renamed functions to match calls in main.ino
 void handleMonophonic(SynthState& state);
 void handleChordButton(SynthState& state);
-void handlePolyphonic(SynthState& state); // Add declaration for polyphonic
+void handlePolyphonic(SynthState& state);
+void handleBoogieTiming(SynthState& state); // Add declaration for Boogie mode
 
 #endif

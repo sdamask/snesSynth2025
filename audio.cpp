@@ -86,7 +86,7 @@ void setupAudio() {
         envelope[i].attack(10);
         envelope[i].decay(200);
         envelope[i].sustain(1.0);
-        envelope[i].release(50);  // Reduce release time to 50ms for faster stop
+        envelope[i].release(1);  // Set release time to minimum (1ms)
 
         // Setup LFO for vibrato
         lfo[i].begin(0.0, 0.0, WAVEFORM_SINE); 
@@ -137,6 +137,7 @@ void applyVibrato(SynthState& state, int voice) {
 
 void playNote(SynthState& state, int voice, int midiNote) {
     float freq = 440.0 * pow(2.0, (midiNote - 69.0) / 12.0);  
+    DEBUG_INFO(CAT_AUDIO, ">>> playNote called: voice=%d, midiNote=%d, freq=%.2f", voice, midiNote, freq); // <<< ADDED DEBUG
     
     // Set Waveform Type (can potentially reset modulation depth? Keep testing)
     int selectedWaveformType = waveformTypes[state.currentWaveform];
@@ -183,7 +184,8 @@ void playNote(SynthState& state, int voice, int midiNote) {
 }
 
 void stopNote(int voice) {
-    DEBUG_INFO(CAT_AUDIO, "Stopping voice %d", voice);
+    DEBUG_INFO(CAT_AUDIO, ">>> stopNote called: voice=%d", voice); // <<< ADDED DEBUG
+    DEBUG_VERBOSE(CAT_AUDIO, "Stopping voice %d", voice);
     envelope[voice].noteOff();
     voiceActive[voice] = false;  // Mark voice as inactive
     lfo[voice].amplitude(0.0); // Stop LFO output
@@ -191,7 +193,7 @@ void stopNote(int voice) {
     // If portamento is active, start sliding back to the previous frequency
     if (portamentoActive[voice] && previousFrequencies[voice] > 0) {
         targetFrequencies[voice] = previousFrequencies[voice];
-        DEBUG_DEBUG(CAT_AUDIO, "Portamento return on voice %d to %f", voice, previousFrequencies[voice]);
+        DEBUG_VERBOSE(CAT_AUDIO, "Portamento return on voice %d to %f", voice, previousFrequencies[voice]);
     }
 }
 
@@ -202,122 +204,64 @@ void updateAudio(SynthState& state) {
     }
 }
 
-// Renamed function - called by handleClock callback in main.ino
-void processMidiTick(SynthState& state) {
-    // Bail out if MIDI sync is not active (no Start message received)
-    if (!state.midiSyncEnabled) return;
-    
-    DEBUG_VERBOSE(CAT_MIDI, "processMidiTick entered. Count: %d", state.midiClockCount);
-    
-    uint32_t currentTime = millis();
-
-    // Define timing ticks
-    const int L_NOTE_TICK = 0;  // Downbeat
-    // const int R_NOTE_TICK = 16; // REMOVED const - Now uses state.boogieRTickValue
-    const int L_NOTE_OFF_TICK = 12; // Tick to send Note Off for short L note
-
-    bool l_trigger_this_tick = (state.midiClockCount == L_NOTE_TICK && state.boogieLActive);
-    bool r_trigger_this_tick = (state.midiClockCount == state.boogieRTickValue && state.boogieRActive); // Use state variable
-    bool l_note_off_this_tick = (state.midiClockCount == L_NOTE_OFF_TICK);
-
-    // --- Handle Note Offs --- 
-    if (state.lastBoogieMidiNote != -1) { // If a boogie note is currently playing
-        bool sendOff = false;
-        // Reason 1: Triggers released
-        if (!state.boogieLActive && !state.boogieRActive) {
-            sendOff = true;
-            DEBUG_INFO(CAT_MIDI, "Boogie MIDI Note Off Sent (Triggers Released): %d", state.lastBoogieMidiNote);
-        }
-        // Reason 2: Short L note duration ended (at tick 12) AND R note isn't about to play
-        else if (l_note_off_this_tick && !state.boogieRActive) {
-            sendOff = true;
-            DEBUG_INFO(CAT_MIDI, "Boogie MIDI Note Off Sent (Short L Note @ Tick %d): %d", state.midiClockCount, state.lastBoogieMidiNote);
-        }
-        // Reason 3: New L note is about to start (redundant with L trigger logic below, but safe)
-        else if (l_trigger_this_tick) {
-            sendOff = true;
-            // DEBUG_INFO(CAT_MIDI, "Boogie MIDI Note Off Sent (Before L Trigger): %d", state.lastBoogieMidiNote);
-        }
-        // Reason 4: New R note is about to start
-        else if (r_trigger_this_tick) { // Uses updated boolean
-             sendOff = true;
-             DEBUG_INFO(CAT_PLAYSTYLE, "Boogie R Trigger (Tick %d): Note %d", state.boogieRTickValue, state.lastBoogieMidiNote);
-        }
-
-        if (sendOff) {
-            sendMidiNoteOff(state.lastBoogieMidiNote, 0, MIDI_CHANNEL);
-            stopNote(0);
-            state.lastBoogieMidiNote = -1;
-        }
-    }
-
-    // --- Calculate Tempo (on tick 0) --- 
-    if (state.midiClockCount == L_NOTE_TICK) { 
-        // state.midiClockCount = 0; // Not needed, handled by modulo in callback
-        // Calculate tempo
-        uint32_t timeDiff = currentTime - state.lastQuarterNoteTime;
-        if (timeDiff > 0) {
-            state.midiTempo = (60000 * 24) / timeDiff;
-        }
-        state.lastQuarterNoteTime = currentTime;
-        state.currentBeat = (state.currentBeat + 1) % 4;
-        DEBUG_VERBOSE(CAT_MIDI, "Quarter Note Beat: %d, Tempo: %d BPM", state.currentBeat, state.midiTempo);
-    }
-
-    // --- Handle Note Ons --- 
-    if (state.boogieModeEnabled) {
-        int baseMidiNote = -1;
-
-        // --- Trigger L Note (Downbeat) --- 
-        if (l_trigger_this_tick) {
-             // Note Off for previous note is handled above now
-             DEBUG_INFO(CAT_PLAYSTYLE, "Boogie Mode Active. Tick: %d, L: %d, R: %d", 
-                    state.midiClockCount, state.boogieLActive, state.boogieRActive);
-             baseMidiNote = getBaseMidiNote(state);
-             if (baseMidiNote != -1) {
-                 baseMidiNote -= 24; // <<< OCTAVE DROP x2 >>>
-                 if (baseMidiNote < 0) baseMidiNote = 0; // Clamp
-                 
-                 DEBUG_INFO(CAT_PLAYSTYLE, "Boogie L Trigger (Tick %d): Note %d", L_NOTE_TICK, baseMidiNote);
-                 playNote(state, 0, baseMidiNote); 
-                 DEBUG_INFO(CAT_MIDI, "Boogie MIDI Note On Sent: %d", baseMidiNote);
-                 sendMidiNoteOn(baseMidiNote, MIDI_VELOCITY, MIDI_CHANNEL); 
-                 state.lastBoogieMidiNote = baseMidiNote; // Track this note
-             }
-        }
-        // --- Trigger R Note (Swung Upbeat) --- 
-        else if (r_trigger_this_tick) {
-             // Note Off for previous note is handled above now
-             DEBUG_INFO(CAT_PLAYSTYLE, "Boogie Mode Active. Tick: %d, L: %d, R: %d", 
-                    state.midiClockCount, state.boogieLActive, state.boogieRActive);
-             baseMidiNote = getBaseMidiNote(state);
-             if (baseMidiNote != -1) {
-                 baseMidiNote -= 24; // <<< OCTAVE DROP x2 >>>
-                 if (baseMidiNote < 0) baseMidiNote = 0; // Clamp
-
-                 DEBUG_INFO(CAT_PLAYSTYLE, "Boogie R Trigger (Tick %d): Note %d", state.boogieRTickValue, baseMidiNote);
-                 playNote(state, 0, baseMidiNote); 
-                 DEBUG_INFO(CAT_MIDI, "Boogie MIDI Note On Sent: %d", baseMidiNote);
-                 sendMidiNoteOn(baseMidiNote, MIDI_VELOCITY, MIDI_CHANNEL); 
-                 state.lastBoogieMidiNote = baseMidiNote; // Track this note
-             }
-        }
-    }
-}
-
 // Helper function to get the current base MIDI note from pressed buttons
+// V12.1 - Uses lastPressedBuffer for priority (most recent held)
 int getBaseMidiNote(SynthState& state) {
-    // Check for currently pressed note button (0-9)
-    for (int i = 0; i < MAX_NOTE_BUTTONS; i++) {
-        if (state.held[i]) {
-            if (state.customProfileIndex == PROFILE_THUNDERSTRUCK) {
-                return thunderstruckMidiNotes[i]; // Use array access
-            } else {
-                // Map button index (0-9) to musical position (0-9 for scale access)
-                int musicalPosition = buttonToMusicalPosition[i]; 
-                return state.scaleHolder[musicalPosition]; // Use scaleHolder
-            }
+    int buttonToPlay = -1;
+    int readIndex = state.lastPressedIndex; // Start reading from the element AFTER the last one written
+
+    // Iterate backwards through the buffer to find the most recent press
+    for (int i = 0; i < LAST_PRESS_BUFFER_SIZE; ++i) {
+        // Decrement index, wrap around buffer
+        readIndex = (readIndex + LAST_PRESS_BUFFER_SIZE - 1) % LAST_PRESS_BUFFER_SIZE;
+        int bufferedButton = state.lastPressedBuffer[readIndex];
+
+        // Check if buffer slot is valid (>=0) AND the button is STILL held
+        if (bufferedButton >= 0 && bufferedButton < MAX_NOTE_BUTTONS && state.held[bufferedButton]) {
+            buttonToPlay = bufferedButton; // Found the most recent, still-held button
+            DEBUG_VERBOSE(CAT_AUDIO, "getBaseMidiNote: Found most recent held button %d from buffer.", buttonToPlay);
+            break; // Stop searching, priority found
         }
     }
-    return -1;
+
+    // If no held button was found by checking the buffer, return -1
+    if (buttonToPlay == -1) {
+        // Optional: Double check state.held[] directly as a fallback? Could be noisy.
+        // For now, trust the buffer check combined with current held state.
+        DEBUG_VERBOSE(CAT_AUDIO, "getBaseMidiNote: No valid held button found in recent press buffer. Returning -1.");
+        return -1;
+    }
+
+    // --- Found a prioritized button, proceed to get its note --- 
+    DEBUG_VERBOSE(CAT_AUDIO, "getBaseMidiNote: Prioritizing button index=%d.", buttonToPlay);
+    if (state.customProfileIndex == PROFILE_THUNDERSTRUCK) {
+        // Handle Thunderstruck profile (Check bounds just in case)
+        if (buttonToPlay >= 0 && buttonToPlay < MAX_NOTE_BUTTONS) {
+            int note = thunderstruckMidiNotes[buttonToPlay];
+            DEBUG_VERBOSE(CAT_AUDIO, "  -> Thunderstruck profile: Returning note %d", note);
+            return note;
+        } else {
+            DEBUG_WARNING(CAT_AUDIO, "getBaseMidiNote: Invalid button index %d for Thunderstruck.", buttonToPlay);
+            return -1;
+        }
+    } else {
+        // Handle Scale profile
+        if (buttonToPlay >= 0 && buttonToPlay < MAX_NOTE_BUTTONS) {
+            int musicalPosition = buttonToMusicalPosition[buttonToPlay];
+            DEBUG_VERBOSE(CAT_AUDIO, "  -> Scale profile: Button %d maps to musicalPos %d", buttonToPlay, musicalPosition);
+            if (musicalPosition >= 0 && musicalPosition < 12) {
+                 int note = state.scaleHolder[musicalPosition];
+                 DEBUG_VERBOSE(CAT_AUDIO, "     -> Scale lookup: Returning note %d", note);
+                 return note;
+            } else {
+                DEBUG_WARNING(CAT_AUDIO, "getBaseMidiNote: Invalid musicalPosition %d for button %d", musicalPosition, buttonToPlay);
+                return -1;
+            }
+        } else {
+             DEBUG_WARNING(CAT_AUDIO, "getBaseMidiNote: Invalid button index %d for Scale profile.", buttonToPlay);
+             return -1;
+        }
+    }
+    // Should not be reached, but added for safety
+    // return -1; 
 }

@@ -25,7 +25,7 @@ void stopNote(int voice);
 void updateAudio(SynthState& state);
 
 // MIDI Clock and Boogie Mode
-void processMidiTick(SynthState& state);
+// void processMidiTick(SynthState& state); // Removed - Logic moved to main loop/callbacks
 int getBaseMidiNote(SynthState& state);
 
 #endif

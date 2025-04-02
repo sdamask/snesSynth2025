@@ -43,102 +43,377 @@ const int thunderstruckMidiNotes[MAX_NOTE_BUTTONS] = {
     80  // BTN_X -> G#
 };
 
-// Monophonic playstyle
+// --- Variable Duration 8th Note Boogie Mode --- V12.6 (Swing Timing)
+void handleBoogieTiming(SynthState& state) {
+    // --- Basic Setup & Tempo Check --- 
+    if (!state.tempoEstablished || state.usPerMidiTick <= 0) { 
+        if (state.boogieCurrentMidiNote != -1) { /* Stop Note & Reset */
+            DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6 Stop: Tempo not established/invalid.");
+            sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0);
+            state.boogieCurrentMidiNote = -1; state.boogieTriggerButton = -1; state.boogieCurrentSlotIndex = -1; state.boogieNoteStopTimeMicros = 0; state.boogieInternalBeatStartTimeMicros = 0;
+        }
+        return;
+    }
+    unsigned long nowMicros = micros();
+
+    // --- Handle Clock State Transitions --- (Same as V12.5)
+    bool clockJustStopped = !state.midiSyncEnabled && state.prevMidiSyncEnabled;
+    bool clockJustStarted = state.midiSyncEnabled && !state.prevMidiSyncEnabled;
+
+    if (clockJustStopped) {
+        DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6: Clock stopped. Switching to Internal Trigger mode.");
+        if (state.boogieCurrentMidiNote != -1) { sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0); }
+        state.boogieCurrentMidiNote = -1; state.boogieTriggerButton = -1; state.boogieCurrentSlotIndex = -1; state.boogieNoteStopTimeMicros = 0; // Reset stop time
+    }
+    if (clockJustStarted) {
+         DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6: Clock started. Switching to External Sync mode.");
+         if (state.boogieCurrentMidiNote != -1) { sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0); }
+         state.boogieCurrentMidiNote = -1; state.boogieTriggerButton = -1; state.boogieCurrentSlotIndex = -1; state.boogieNoteStopTimeMicros = 0;
+    }
+
+    // --- Calculate Core & Swing Timings --- 
+    float quarterNoteDurationMicros = state.usPerMidiTick * 24.0f;
+    if (quarterNoteDurationMicros <= 0) return; // Safety check
+    float eighthNoteNominalDuration = quarterNoteDurationMicros / 2.0f;
+
+    // Calculate Swing Delay (Max delay is Q/6)
+    float swingDelayMicros = state.swingAmount * (quarterNoteDurationMicros / 6.0f);
+
+    // Calculate absolute start times (relative to beat start) for each slot
+    unsigned long slot0StartTimeRel = 0; 
+    unsigned long slot1StartTimeRel = (unsigned long)(eighthNoteNominalDuration + swingDelayMicros);
+
+    // Calculate intended note durations (can be refined later)
+    // For now, assume 50% duration ratio for simplicity in stop calculation
+    unsigned long note0IntendedDuration = (unsigned long)(eighthNoteNominalDuration * 0.5f); 
+    unsigned long note1IntendedDuration = (unsigned long)(eighthNoteNominalDuration * 0.5f); 
+
+    // Calculate absolute stop times (relative to beat start)
+    unsigned long slot0StopTimeRel = min(note0IntendedDuration, slot1StartTimeRel); 
+    unsigned long slot1StopTimeRel = min(slot1StartTimeRel + note1IntendedDuration, (unsigned long)quarterNoteDurationMicros);
+
+    // --- Get Input & Prioritized Note --- (Same as V12.5)
+    int newlyPressedButton = -1;
+    for (int i = 0; i < MAX_NOTE_BUTTONS; ++i) { if (state.pressed[i]) { newlyPressedButton = i; break; } }
+    int prioritizedBaseMidiNote = getBaseMidiNote(state);
+
+
+    // --- Determine Beat Reference Time --- 
+    unsigned long currentBeatRefTimeMicros = 0;
+    unsigned long elapsedInCurrentBeat = 0;
+    if (state.midiSyncEnabled) {
+        // External Sync Mode: Reference is state.beatStartTimeMicros
+        currentBeatRefTimeMicros = state.beatStartTimeMicros;
+        elapsedInCurrentBeat = nowMicros - currentBeatRefTimeMicros;
+        // Handle beat rollover for elapsed time calculation
+        elapsedInCurrentBeat = elapsedInCurrentBeat % (unsigned long)quarterNoteDurationMicros;
+
+    } else if (state.boogieTriggerButton != -1) {
+        // Internal Trigger Mode (Sequence Active): Reference is internal start time
+        currentBeatRefTimeMicros = state.boogieInternalBeatStartTimeMicros;
+        elapsedInCurrentBeat = nowMicros - currentBeatRefTimeMicros;
+        // Handle beat rollover for elapsed time calculation
+        elapsedInCurrentBeat = elapsedInCurrentBeat % (unsigned long)quarterNoteDurationMicros;
+    } else {
+         // Internal Trigger Mode (Sequence Inactive) or Error
+         // No beat reference until button press
+    }
+
+
+    // --- Combined Note On/Off Logic --- 
+
+    // 1. Handle Note Off
+    if (state.boogieCurrentMidiNote != -1 && currentBeatRefTimeMicros != 0) { // If note is playing and beat ref is valid
+        unsigned long currentNoteAbsStopTime = currentBeatRefTimeMicros + 
+                                             ((state.boogieCurrentSlotIndex == 0) ? slot0StopTimeRel : slot1StopTimeRel);
+        // Add rollover handling if needed - compare absolute times
+        unsigned long beatNumPlaying = (state.boogieNoteStartTimeMicros - currentBeatRefTimeMicros) / (unsigned long)quarterNoteDurationMicros; // Estimate beat # note started on
+        currentNoteAbsStopTime = currentBeatRefTimeMicros + (beatNumPlaying * (unsigned long)quarterNoteDurationMicros) + ((state.boogieCurrentSlotIndex == 0) ? slot0StopTimeRel : slot1StopTimeRel);
+
+
+        if (nowMicros >= currentNoteAbsStopTime) {
+            DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie V12.6 Note Stop: Slot %d, Note %d", state.boogieCurrentSlotIndex, state.boogieCurrentMidiNote);
+            sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL);
+            stopNote(0);
+            state.boogieCurrentMidiNote = -1;
+            // Keep state.boogieCurrentSlotIndex to know which slot just ended? No, reset it.
+            state.boogieCurrentSlotIndex = -1; 
+        }
+    }
+
+    // 2. Handle Sequence Stop/Start Trigger (Button Presses/Releases)
+    if (state.midiSyncEnabled) {
+        // --- External Sync Mode --- 
+        if (state.boogieTriggerButton != -1 && prioritizedBaseMidiNote == -1) { // Button released
+             DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6 Ext Stop: No Button Held");
+             if (state.boogieCurrentMidiNote != -1) { 
+                 DEBUG_VERBOSE(CAT_MIDI, "[Ext Stop Trigger]: Sending immediate Note Off for %d", state.boogieCurrentMidiNote);
+                 sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL);
+                 stopNote(0);
+                 state.boogieCurrentMidiNote = -1;
+                 state.boogieCurrentSlotIndex = -1;
+             }
+             state.boogieTriggerButton = -1; // Stop sequence trigger
+        } else if (state.boogieTriggerButton == -1 && newlyPressedButton != -1 && prioritizedBaseMidiNote != -1) { // New button press
+            DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6 Ext Start Trigger");
+            state.boogieTriggerButton = newlyPressedButton; // Start sequence trigger
+            // Note will be played by Note On logic below if appropriate
+        }
+    } else {
+        // --- Internal Trigger Mode --- 
+         if (state.boogieTriggerButton != -1 && prioritizedBaseMidiNote == -1) { // Button released
+             DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6 Int Stop: No Button Held");
+             if (state.boogieCurrentMidiNote != -1) { 
+                 DEBUG_VERBOSE(CAT_MIDI, "[Int Stop Trigger]: Sending immediate Note Off for %d", state.boogieCurrentMidiNote);
+                 sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL);
+                 stopNote(0);
+                 state.boogieCurrentMidiNote = -1;
+                 state.boogieCurrentSlotIndex = -1;
+             }
+             state.boogieTriggerButton = -1; // Stop sequence trigger
+             state.boogieInternalBeatStartTimeMicros = 0; // Reset internal beat ref
+        } else if (state.boogieTriggerButton == -1 && newlyPressedButton != -1 && prioritizedBaseMidiNote != -1) { // New button press
+            DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6 Int Start Trigger @ %lu", nowMicros);
+            state.boogieTriggerButton = newlyPressedButton; // Start sequence
+            state.boogieInternalBeatStartTimeMicros = nowMicros; // *** THIS IS THE ONE ***
+            currentBeatRefTimeMicros = state.boogieInternalBeatStartTimeMicros; // Update local ref immediately
+            elapsedInCurrentBeat = 0; // Start at beginning of internal beat
+             // Note will be played by Note On logic below if appropriate
+        }
+    }
+
+    // 3. Handle Note On
+    // Only attempt if sequence is active AND no note currently playing
+    if (state.boogieTriggerButton != -1 && state.boogieCurrentMidiNote == -1 && currentBeatRefTimeMicros != 0 && prioritizedBaseMidiNote != -1) {
+        int targetSlot = -1;
+        unsigned long targetAbsStartTime = 0;
+        unsigned long targetAbsStopTime = 0;
+        unsigned long beatNumCurrent = (nowMicros - currentBeatRefTimeMicros) / (unsigned long)quarterNoteDurationMicros; // Estimate current beat # 
+
+        // Check if we should play Slot 0
+        unsigned long slot0AbsStart = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot0StartTimeRel;
+        unsigned long slot0AbsStop = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot0StopTimeRel;
+        if (nowMicros >= slot0AbsStart && nowMicros < slot0AbsStop) {
+             targetSlot = 0;
+             targetAbsStartTime = slot0AbsStart;
+             targetAbsStopTime = slot0AbsStop;
+        }
+        
+        // Check if we should play Slot 1 (only if Slot 0 didn't match)
+        if (targetSlot == -1) {
+            unsigned long slot1AbsStart = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot1StartTimeRel;
+            unsigned long slot1AbsStop = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot1StopTimeRel;
+            if (nowMicros >= slot1AbsStart && nowMicros < slot1AbsStop) {
+                 targetSlot = 1;
+                 targetAbsStartTime = slot1AbsStart;
+                 targetAbsStopTime = slot1AbsStop;
+            }
+        }
+
+        // If a target slot was found, play the note
+        if (targetSlot != -1) {
+            int targetNote = prioritizedBaseMidiNote - 24; if (targetNote < 0) targetNote = 0; if (targetNote > 127) targetNote = 127;
+            DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie V12.6 Note Start: Slot %d, Note %d, Stop @ %lu", targetSlot, targetNote, targetAbsStopTime);
+            playNote(state, 0, targetNote);
+            sendMidiNoteOn(targetNote, MIDI_VELOCITY, MIDI_CHANNEL);
+            state.boogieCurrentMidiNote = targetNote;
+            state.boogieCurrentSlotIndex = targetSlot;
+            state.boogieNoteStartTimeMicros = targetAbsStartTime; // Store actual start time for reference
+            state.boogieNoteStopTimeMicros = targetAbsStopTime; // Store calculated stop time for simple check (might be redundant now)
+        }
+    }
+}
+
+// Monophonic playstyle - V3 Revert + Fixes
 void handleMonophonic(SynthState& state) {
-    // Handle boogie mode first if enabled
-    if (state.boogieModeEnabled) {
-        // Update boogie trigger states based on current hold status
-        state.boogieLActive = state.held[BTN_L];
-        state.boogieRActive = state.held[BTN_R];
-        
-        // Let handleMidiClock handle the actual note playing and MIDI messages.
-        // We don't need to explicitly stop notes here, handleMidiClock will send NoteOff.
-        return; 
-    }
+    DEBUG_DEBUG(CAT_PLAYSTYLE, "--- Entered handleMonophonic ---"); // ADD DEBUG
+    // --- Determine Inputs ---
+    int newlyPressedButton = -1;
+    int releasedButton = -1;
+    int highestPriorityHeldButton = -1; // Track the button we *should* be playing if held
 
-    // --- Standard Monophonic Mode Handling --- 
-    bool currentButtonPressed = false;
-    bool currentButtonReleased = false;
-    int buttonToPlay = -1;
-
-    // Check for currently pressed button (0-9)
-    for (int i = 0; i < MAX_NOTE_BUTTONS; i++) {
+    for (int i = 0; i < MAX_NOTE_BUTTONS; ++i) {
         if (state.pressed[i]) {
-            currentButtonPressed = true;
-            buttonToPlay = i;
-            break;
+            newlyPressedButton = i;
+            // Don't break here, need to check all for highestPriorityHeldButton
+        }
+        // Check if the *currently playing* button was released
+        if (state.released[i] && i == state.currentButton) { 
+             releasedButton = i;
+        }
+        // Find lowest index held button
+        if (state.held[i] && highestPriorityHeldButton == -1) { 
+            highestPriorityHeldButton = i;
         }
     }
-
-    // Check for released button (the one currently playing)
-    if (state.currentButton != -1 && state.released[state.currentButton]) {
-         currentButtonReleased = true;
+    // Special check for L press in Thunderstruck
+    if (newlyPressedButton == -1 && state.customProfileIndex == PROFILE_THUNDERSTRUCK && state.pressed[BTN_L]) {
+        newlyPressedButton = BTN_L;
+        // L can be the "held" button in TS if nothing else is held
+        if (highestPriorityHeldButton == -1) highestPriorityHeldButton = BTN_L; 
     }
-    
-    // --- Handle Button Press --- 
-    if (currentButtonPressed) {
-        // Send Note Off for the previous note, if one was playing
-        if (state.currentMidiNote != -1) {
-            sendMidiNoteOff(state.currentMidiNote, 0, MIDI_CHANNEL);
-            // Don't call stopNote(0) here, playNote handles voice reuse/portamento
+
+
+    // --- Determine Current Pitch Bend ---
+    int currentPitchBend = 0;
+    if (state.customProfileIndex != PROFILE_THUNDERSTRUCK) {
+        if (state.held[BTN_L] && state.held[BTN_R]) currentPitchBend = 0;
+        else if (state.held[BTN_L]) currentPitchBend = -12;
+        else if (state.held[BTN_R]) currentPitchBend = 12;
+    } else { 
+         if (state.held[BTN_R]) currentPitchBend = 12;
+    }
+    bool pitchBendChanged = (currentPitchBend != state.prevPitchBend);
+
+    // --- Logic ---
+
+    // 1. Handle New Button Press (Highest Priority)
+    if (newlyPressedButton != -1) {
+        // Send Note Off for the previous note if it was different
+        if (state.currentMidiNote != -1 && state.currentButton != newlyPressedButton) {
+             DEBUG_VERBOSE(CAT_MIDI, "Mono MIDI Note Off (Before New Press): %d", state.currentMidiNote);
+             sendMidiNoteOff(state.currentMidiNote, 0, MIDI_CHANNEL);
+             // Don't stop audio, playNote handles retrigger/portamento
         }
 
-        // Calculate pitch bend based on L/R triggers
-        int pitchBend = 0;
-        // Standard profile: L=-12, R=+12, L+R=0 (Thunderstruck profile L button handled separately)
-        if (state.customProfileIndex != PROFILE_THUNDERSTRUCK) {
-            if (state.held[BTN_L] && state.held[BTN_R]) pitchBend = 0;
-            else if (state.held[BTN_L]) pitchBend = -12;
-            else if (state.held[BTN_R]) pitchBend = 12;
-        } else { // Thunderstruck: Only R gives pitch bend
-             if (state.held[BTN_R]) pitchBend = 12;
-        }
+        // Get Base Note for the newly pressed button
+        int baseMidiNote = -1;
+         if (state.customProfileIndex == PROFILE_THUNDERSTRUCK) {
+            if (newlyPressedButton == BTN_L) baseMidiNote = 71;
+            else if (newlyPressedButton < MAX_NOTE_BUTTONS) baseMidiNote = thunderstruckMidiNotes[newlyPressedButton];
+         } else { // Standard Scale Profile
+             if (newlyPressedButton < MAX_NOTE_BUTTONS) {
+                int musicalPosition = buttonToMusicalPosition[newlyPressedButton];
+                if (musicalPosition >= 0 && musicalPosition < 12) baseMidiNote = state.scaleHolder[musicalPosition];
+                else { DEBUG_WARNING(CAT_PLAYSTYLE, "Mono Press: Invalid musicalPosition %d for button %d", musicalPosition, newlyPressedButton); }
+             }
+         }
 
-        // Get base MIDI note
-        int baseMidiNote = -1; 
+         if (baseMidiNote != -1) {
+             int finalMidiNote = baseMidiNote + currentPitchBend;
+             if (finalMidiNote < 0) finalMidiNote = 0; if (finalMidiNote > 127) finalMidiNote = 127;
+
+             DEBUG_INFO(CAT_PLAYSTYLE, "Mono Press: base=%d, bend=%d, final=%d (Button %d)", baseMidiNote, currentPitchBend, finalMidiNote, newlyPressedButton);
+             playNote(state, 0, finalMidiNote);
+             sendMidiNoteOn(finalMidiNote, MIDI_VELOCITY, MIDI_CHANNEL);
+
+             state.currentMidiNote = finalMidiNote;
+             state.currentButton = newlyPressedButton; // Update the currently playing button
+             state.currentFrequency = midiToPitchFloat[finalMidiNote];
+         } else {
+              DEBUG_WARNING(CAT_PLAYSTYLE, "Mono Press: Could not get note for button %d", newlyPressedButton);
+              // If press failed to get note, ensure previous note is stopped?
+              if(state.currentMidiNote != -1) sendMidiNoteOff(state.currentMidiNote, 0, MIDI_CHANNEL);
+              stopNote(0); state.currentMidiNote = -1; state.currentButton = -1; state.currentFrequency = 0.0;
+         }
+    }
+    // 2. Handle Release of the Playing Button (If no new button was pressed)
+    else if (releasedButton != -1) {
+        // --- Retrigger Check ---
+        // Find the highest priority button *still held*
+        int buttonToRetrigger = -1;
+         for (int i = 0; i < MAX_NOTE_BUTTONS; ++i) { 
+             // Check state.held[] directly for what is held NOW
+             if (i != releasedButton && state.held[i]) { 
+                 buttonToRetrigger = i;
+                 break;
+             }
+         }
+         // Retriggering L in Thunderstruck is handled by its own press logic if needed.
+
+        if (buttonToRetrigger != -1) {
+            // Retrigger the highest priority *remaining* held button
+             DEBUG_INFO(CAT_PLAYSTYLE, "Mono Retrigger: Button %d released, retriggering held button %d", releasedButton, buttonToRetrigger);
+             
+             // Send Note Off for the *released* note
+             if (state.currentMidiNote != -1) {
+                  sendMidiNoteOff(state.currentMidiNote, 0, MIDI_CHANNEL);
+             }
+
+             // Get Base Note for the button to retrigger
+             int baseMidiNote = -1;
+             if (state.customProfileIndex == PROFILE_THUNDERSTRUCK) {
+                  if (buttonToRetrigger < MAX_NOTE_BUTTONS) baseMidiNote = thunderstruckMidiNotes[buttonToRetrigger];
+             } else { // Standard Scale Profile
+                  if (buttonToRetrigger < MAX_NOTE_BUTTONS) {
+                      int musicalPosition = buttonToMusicalPosition[buttonToRetrigger];
+                       if (musicalPosition >= 0 && musicalPosition < 12) baseMidiNote = state.scaleHolder[musicalPosition];
+                       else { DEBUG_WARNING(CAT_PLAYSTYLE, "Mono Retrigger: Invalid musicalPosition %d for button %d", musicalPosition, buttonToRetrigger); }
+                  }
+             }
+
+              if (baseMidiNote != -1) {
+                 int finalMidiNote = baseMidiNote + currentPitchBend; // Use current bend
+                 if (finalMidiNote < 0) finalMidiNote = 0; if (finalMidiNote > 127) finalMidiNote = 127;
+
+                 DEBUG_INFO(CAT_PLAYSTYLE, "Mono Retrigger Play: base=%d, bend=%d, final=%d (Button %d)", baseMidiNote, currentPitchBend, finalMidiNote, buttonToRetrigger);
+                 playNote(state, 0, finalMidiNote);
+                 sendMidiNoteOn(finalMidiNote, MIDI_VELOCITY, MIDI_CHANNEL);
+
+                 state.currentMidiNote = finalMidiNote;
+                 state.currentButton = buttonToRetrigger; // Update to the retriggered button
+                 state.currentFrequency = midiToPitchFloat[finalMidiNote];
+             } else {
+                  DEBUG_WARNING(CAT_PLAYSTYLE, "Mono Retrigger: Could not get note for button %d", buttonToRetrigger);
+                  stopNote(0); state.currentMidiNote = -1; state.currentButton = -1; state.currentFrequency = 0.0;
+             }
+        } else {
+            // Stop Note (Nothing else held)
+             DEBUG_DEBUG(CAT_PLAYSTYLE, "[Mono Stop]: Entering 'Stop Note (Nothing else held)' block for released button %d.", releasedButton); // Added log
+             if (state.currentMidiNote != -1) {
+                int noteToStop = state.currentMidiNote; // Store note before resetting state
+                DEBUG_DEBUG(CAT_MIDI, "[Mono Stop]: Attempting MIDI Note Off for %d", noteToStop); // Added log
+                sendMidiNoteOff(noteToStop, 0, MIDI_CHANNEL);
+                DEBUG_DEBUG(CAT_MIDI, "[Mono Stop]: MIDI Note Off Sent for %d.", noteToStop); // Added log
+             }
+            DEBUG_DEBUG(CAT_AUDIO, "[Mono Stop]: Attempting stopNote(0)."); // Added log
+            stopNote(0);
+            DEBUG_DEBUG(CAT_AUDIO, "[Mono Stop]: stopNote(0) called."); // Added log
+            state.currentMidiNote = -1; state.currentButton = -1; state.currentFrequency = 0.0;
+        }
+    }
+    // 3. Handle Pitch Bend Change Only (If no press or release of playing note occurred)
+    else if (pitchBendChanged && state.currentButton != -1) {
+        // Get Base Note for the *currently* playing button (check state.currentButton)
+        int baseMidiNote = -1;
         if (state.customProfileIndex == PROFILE_THUNDERSTRUCK) {
-            if (buttonToPlay == BTN_L) { // Handle L button specifically in TS profile
-                 baseMidiNote = 71; // Open B
-            } else if (buttonToPlay >= 0 && buttonToPlay < MAX_NOTE_BUTTONS) {
-                 baseMidiNote = thunderstruckMidiNotes[buttonToPlay];
-            } else { return; } // Invalid button index
-        } else { // Standard Scale Profile
-             if (buttonToPlay >= 0 && buttonToPlay < MAX_NOTE_BUTTONS) {
-                 int musicalPosition = buttonToMusicalPosition[buttonToPlay];
-                 baseMidiNote = state.scaleHolder[musicalPosition];
-             } else { return; } // Invalid button index
-        }
+            if (state.currentButton == BTN_L) baseMidiNote = 71;
+            else if (state.currentButton < MAX_NOTE_BUTTONS) baseMidiNote = thunderstruckMidiNotes[state.currentButton];
+         } else { 
+             if (state.currentButton < MAX_NOTE_BUTTONS) {
+                int musicalPosition = buttonToMusicalPosition[state.currentButton];
+                if (musicalPosition >= 0 && musicalPosition < 12) baseMidiNote = state.scaleHolder[musicalPosition];
+                 else { DEBUG_WARNING(CAT_PLAYSTYLE, "Mono Bend Change: Invalid musicalPosition %d for button %d", musicalPosition, state.currentButton); }
+             }
+         }
 
-        // Apply pitch bend and play note
-        if (baseMidiNote != -1) {
-            int midiNote = baseMidiNote + pitchBend;
-            if (midiNote < 0) midiNote = 0;
-            if (midiNote > 127) midiNote = 127;
+         if (baseMidiNote != -1) {
+             int finalMidiNote = baseMidiNote + currentPitchBend; // Apply NEW bend
+             if (finalMidiNote < 0) finalMidiNote = 0; if (finalMidiNote > 127) finalMidiNote = 127;
 
-            playNote(state, 0, midiNote); // Play internal sound
-            sendMidiNoteOn(midiNote, MIDI_VELOCITY, MIDI_CHANNEL); // Send MIDI Note On
-            
-            // Update state
-            state.currentNote = midiNote; // Deprecated? Use currentMidiNote
-            state.currentMidiNote = midiNote; // Store the MIDI note being played
-            state.currentButton = buttonToPlay;
-            state.currentFrequency = midiToPitchFloat[midiNote]; // Use lookup from utils.h
-        }
+             DEBUG_INFO(CAT_PLAYSTYLE, "Mono Bend Change: base=%d, bend=%d, final=%d (Button %d)", baseMidiNote, currentPitchBend, finalMidiNote, state.currentButton);
+             
+             // Send Note Off for previous pitch ONLY if note number changes
+              if (state.currentMidiNote != -1 && state.currentMidiNote != finalMidiNote) {
+                  sendMidiNoteOff(state.currentMidiNote, 0, MIDI_CHANNEL);
+              }
+             playNote(state, 0, finalMidiNote); // Retrigger audio with new pitch
+             
+             // Send Note On only if note number changed or was previously off
+              if (state.currentMidiNote == -1 || state.currentMidiNote != finalMidiNote) {
+                 sendMidiNoteOn(finalMidiNote, MIDI_VELOCITY, MIDI_CHANNEL);
+              }
+
+             // Update state (only note, not button)
+             state.currentMidiNote = finalMidiNote;
+             state.currentFrequency = midiToPitchFloat[finalMidiNote];
+         } else {
+              DEBUG_WARNING(CAT_PLAYSTYLE, "Mono Bend Change: Could not get note for current button %d", state.currentButton);
+         }
     }
-    // --- Handle Button Release --- 
-    else if (currentButtonReleased) {
-        // Send Note Off for the released note
-        if (state.currentMidiNote != -1) {
-            sendMidiNoteOff(state.currentMidiNote, 0, MIDI_CHANNEL);
-        }
-        stopNote(0); // Stop internal sound
-        
-        // Reset state
-        state.currentNote = -1;
-        state.currentMidiNote = -1; // Mark no MIDI note playing
-        state.currentButton = -1;
-        state.currentFrequency = 0.0;
-    }
+
+    // Update previous pitch bend state for next cycle comparison
+    state.prevPitchBend = currentPitchBend;
 }
 
 // ChordButton playstyle
@@ -182,7 +457,7 @@ void handleChordButton(SynthState& state) {
             }
         }
         if (lastHeldButtonInBuffer != -1) {
-            Serial.print("Retriggering chord (Buffer Hit) for button: "); Serial.println(lastHeldButtonInBuffer);
+            // Serial.print("Retriggering chord (Buffer Hit) for button: "); Serial.println(lastHeldButtonInBuffer); // Commented out
             triggerNewChord = true;
             buttonToPlay = lastHeldButtonInBuffer;
         } else {
@@ -195,7 +470,7 @@ void handleChordButton(SynthState& state) {
                  }
             }
             if (lowestFallbackHeld != -1) {
-                 Serial.print("Retriggering chord (Fallback Held - Lowest) for button: "); Serial.println(lowestFallbackHeld);
+                 // Serial.print("Retriggering chord (Fallback Held - Lowest) for button: "); Serial.println(lowestFallbackHeld); // Commented out
                  triggerNewChord = true;
                  buttonToPlay = lowestFallbackHeld;
             } else {
@@ -217,12 +492,13 @@ void handleChordButton(SynthState& state) {
     if (shouldStopNotes) {
         // --- Stop Chord ---
         if (state.currentButton != -1) { 
-             Serial.println("Stopping chord (button released w/o retrigger or none held)");
+             // Serial.println("Stopping chord (button released w/o retrigger or none held)"); // Commented out
             bool notesWerePlaying = false;
             for (int i = 0; i < 4; i++) {
                 if (state.currentChordNotes[i] != -1) {
                     notesWerePlaying = true;
                     stopNote(i);
+                    DEBUG_VERBOSE(CAT_MIDI, "Chord MIDI Note Off (Stopping Chord): %d", state.currentChordNotes[i]);
                     sendMidiNoteOff(state.currentChordNotes[i], 0, MIDI_CHANNEL); 
                     state.currentChordNotes[i] = -1;
                     state.currentChordFrequencies[i] = 0.0;
@@ -242,21 +518,22 @@ void handleChordButton(SynthState& state) {
 
         // Prepare previous voices: Send MIDI Note Offs. Stop audio voices only if Portamento is OFF.
         if (state.currentButton != -1 && (isNewButton || pitchBendChanged)) {
-            Serial.println("Preparing voices for new/changed chord...");
+            // Serial.println("Preparing voices for new/changed chord..."); // Commented out
              for (int i = 0; i < 4; i++) {
                 if (state.currentChordNotes[i] != -1) {
+                     DEBUG_VERBOSE(CAT_MIDI, "Chord MIDI Note Off (Prep New Chord): %d", state.currentChordNotes[i]);
                      sendMidiNoteOff(state.currentChordNotes[i], 0, MIDI_CHANNEL); 
                      
                      // *** CORRECTED STOP LOGIC ***
                      // Only stop audio voice if Portamento is OFF.
                      if (!state.portamentoEnabled) {
-                         Serial.println("   Stopping voice (Porta OFF)");
+                         // Serial.println("   Stopping voice (Porta OFF)"); // Commented out
                          stopNote(i);
                          state.currentChordNotes[i] = -1; 
                          state.currentChordFrequencies[i] = 0.0;
                          state.waveformOpen[i] = 1;
                      } else {
-                         Serial.println("   Porta ON: Keeping voice active for slide.");
+                         // Serial.println("   Porta ON: Keeping voice active for slide."); // Commented out
                          // Keep voice active for slide, state will be updated below
                      }
                 }
@@ -271,7 +548,7 @@ void handleChordButton(SynthState& state) {
         int numNotes;
         getChordNotes(state, musicalPosition + 1, chordNotes, numNotes); 
 
-        Serial.print("Playing new chord for button "); Serial.print(state.currentButton); Serial.print(" (musical pos "); Serial.print(musicalPosition); Serial.println(")");
+        // Serial.print("Playing new chord for button "); Serial.print(state.currentButton); Serial.print(" (musical pos "); Serial.print(musicalPosition); Serial.println(")"); // Commented out
         
         // Play each note in the new chord
         for (int i = 0; i < numNotes; i++) {
@@ -280,7 +557,7 @@ void handleChordButton(SynthState& state) {
                 if (finalMidiNote < 0) finalMidiNote = 0;
                 if (finalMidiNote > 127) finalMidiNote = 127;
                 
-                Serial.print("  Voice "); Serial.print(i); Serial.print(": MIDI "); Serial.println(finalMidiNote);
+                // Serial.print("  Voice "); Serial.print(i); Serial.print(": MIDI "); Serial.println(finalMidiNote); // Commented out
                 playNote(state, i, finalMidiNote); 
                 sendMidiNoteOn(finalMidiNote, MIDI_VELOCITY, MIDI_CHANNEL);
                 state.currentChordNotes[i] = finalMidiNote;
@@ -291,8 +568,9 @@ void handleChordButton(SynthState& state) {
         // Stop unused voices
          for (int i = numNotes; i < 4; ++i) {
               if (state.currentChordNotes[i] != -1) {
-                   Serial.print("  Stopping unused voice "); Serial.println(i);
+                   // Serial.print("  Stopping unused voice "); Serial.println(i); // Commented out
                    stopNote(i);
+                   DEBUG_VERBOSE(CAT_MIDI, "Chord MIDI Note Off (Unused Voice): %d", state.currentChordNotes[i]);
                    sendMidiNoteOff(state.currentChordNotes[i], 0, MIDI_CHANNEL);
                    state.currentChordNotes[i] = -1;
                    state.currentChordFrequencies[i] = 0.0;

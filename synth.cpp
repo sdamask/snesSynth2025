@@ -55,17 +55,47 @@ void initializeSynthState(SynthState& state) {
     }
     state.lastPressedIndex = 0;
     
-    // Initialize MIDI sync and boogie mode
+    // Initialize MIDI sync and rhythmic mode
     state.midiSyncEnabled = false;
-    state.midiClockCount = 0;
-    state.lastQuarterNoteTime = 0;
-    state.midiTempo = 120;  // Default 120 BPM
-    state.boogieModeEnabled = true; // Default Boogie Mode ON for testing
+    state.boogieModeEnabled = false; // Start with Boogie OFF by default
+    state.rhythmicModeEnabled = false; // Start with Rhythmic OFF by default
+    
+    // Boogie State Init
+    state.boogieRTimingRatio = 0.5f; // Ensure this is initialized
+    state.beatStartTimeMicros = 0;   // Initialize new variable
+    // state.notePlayedInBeat[0] = false; // Initialize new variable - REMOVED for V10
+    // state.notePlayedInBeat[1] = false; // Initialize new variable - REMOVED for V10
+    // state.lastBoogieMidiNote = -1;     // Ensure this is initialized - REMOVED for V11
+    // Initialize V11 state
+    state.boogieTriggerButton = -1;
+    state.boogieNoteStopTimeMicros = 0;
+    state.boogieCurrentMidiNote = -1;
+    state.boogieCurrentSlotIndex = -1;
+    // state.boogieIsCurrentlyPlaying = false; // REMOVED for V11
+    
+    // Rhythmic State Init (keep existing init)
+    state.lastRhythmicMidiNote = -1; // Initialize new variable
     state.boogieLActive = false;
     state.boogieRActive = false;
-    state.currentBeat = 0;
-    state.lastBoogieMidiNote = -1; // Initialize to -1 (no note playing)
-    state.boogieRTickValue = 16; // Default R tick (swing)
+
+    // Initialize Micros()-based Timing State
+    state.lastTickTimeMicros = 0;
+    state.usPerMidiTick = 20833.33f; // Default: 120 BPM -> (60 * 1e6 / 120 BPM / 24 PPQN)
+    state.cycleStartTimeMicros = 0;
+    
+    // Initialize Default Rhythm Pattern (5 notes in 48 ticks)
+    state.numNotesInPattern = 5;
+    state.currentRhythmPatternLengthTicks = 48.0f;
+    float ticksPerNote = state.currentRhythmPatternLengthTicks / state.numNotesInPattern; // 9.6
+    for (int i = 0; i < state.numNotesInPattern; ++i) {
+        state.currentRhythmPatternTicks[i] = i * ticksPerNote;
+        state.notePlayedInCycle[i] = false;
+    }
+    // Clear remaining slots in pattern arrays
+    for (int i = state.numNotesInPattern; i < state.MAX_PATTERN_NOTES; ++i) {
+        state.currentRhythmPatternTicks[i] = 0.0f;
+        state.notePlayedInCycle[i] = false;
+    }
 
     // Initialize debug system
     
