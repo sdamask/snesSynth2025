@@ -119,6 +119,25 @@ void handleBoogieTiming(SynthState& state) {
          // No beat reference until button press
     }
 
+    // --- Handle Immediate Mute Press (NEW) ---
+    // Check if L/R press should immediately stop a playing note
+    if (state.boogieCurrentMidiNote != -1) { // Only if a note is playing
+        if (state.pressed[BTN_L] && state.boogieCurrentSlotIndex == 0) {
+            // L pressed while Slot 0 note is playing
+            DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie Mute Stop: L pressed, stopping Slot 0 note %d", state.boogieCurrentMidiNote);
+            sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL);
+            stopNote(0);
+            state.boogieCurrentMidiNote = -1;
+            state.boogieCurrentSlotIndex = -1; // Mark as silent/slot ended
+        } else if (state.pressed[BTN_R] && state.boogieCurrentSlotIndex == 1) {
+            // R pressed while Slot 1 note is playing
+            DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie Mute Stop: R pressed, stopping Slot 1 note %d", state.boogieCurrentMidiNote);
+            sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL);
+            stopNote(0);
+            state.boogieCurrentMidiNote = -1;
+            state.boogieCurrentSlotIndex = -1; // Mark as silent/slot ended
+        }
+    }
 
     // --- Combined Note On/Off Logic --- 
 
@@ -190,10 +209,25 @@ void handleBoogieTiming(SynthState& state) {
         unsigned long targetAbsStopTime = 0;
         unsigned long beatNumCurrent = (nowMicros - currentBeatRefTimeMicros) / (unsigned long)quarterNoteDurationMicros; // Estimate current beat # 
 
-        // Check if we should play Slot 0
+        // --- Read Mute Buttons --- 
+        bool muteSlot0 = state.held[BTN_L];
+        bool muteSlot1 = state.held[BTN_R];
+
+        // Calculate absolute times for logging
         unsigned long slot0AbsStart = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot0StartTimeRel;
         unsigned long slot0AbsStop = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot0StopTimeRel;
-        if (nowMicros >= slot0AbsStart && nowMicros < slot0AbsStop) {
+        unsigned long slot1AbsStart = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot1StartTimeRel;
+        unsigned long slot1AbsStop = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot1StopTimeRel;
+
+        // --- ADD DEBUG LOGS --- 
+        DEBUG_DEBUG(CAT_PLAYSTYLE, "[Note On Check] Now: %lu, Mute0: %d, Mute1: %d", nowMicros, muteSlot0, muteSlot1);
+        DEBUG_DEBUG(CAT_PLAYSTYLE, "  Slot 0 Window: [%lu, %lu)", slot0AbsStart, slot0AbsStop);
+        DEBUG_DEBUG(CAT_PLAYSTYLE, "  Slot 1 Window: [%lu, %lu)", slot1AbsStart, slot1AbsStop);
+        // --- END DEBUG LOGS ---
+
+        // Check if we should play Slot 0
+        // Play Slot 0 only if within window AND NOT muted by L button
+        if (!muteSlot0 && nowMicros >= slot0AbsStart && nowMicros < slot0AbsStop) {
              targetSlot = 0;
              targetAbsStartTime = slot0AbsStart;
              targetAbsStopTime = slot0AbsStop;
@@ -201,9 +235,8 @@ void handleBoogieTiming(SynthState& state) {
         
         // Check if we should play Slot 1 (only if Slot 0 didn't match)
         if (targetSlot == -1) {
-            unsigned long slot1AbsStart = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot1StartTimeRel;
-            unsigned long slot1AbsStop = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot1StopTimeRel;
-            if (nowMicros >= slot1AbsStart && nowMicros < slot1AbsStop) {
+            // Play Slot 1 only if within window AND NOT muted by R button
+            if (!muteSlot1 && nowMicros >= slot1AbsStart && nowMicros < slot1AbsStop) {
                  targetSlot = 1;
                  targetAbsStartTime = slot1AbsStart;
                  targetAbsStopTime = slot1AbsStop;
