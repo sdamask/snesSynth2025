@@ -12,7 +12,7 @@
 
 void handleSerialCommand(String command, SynthState& state) {
     command.trim(); // Remove leading/trailing whitespace
-
+    
     if (command.startsWith("scale")) {
         // Extract value after "scale "
         int scaleVal = command.substring(6).toInt();
@@ -193,6 +193,18 @@ void handleSerialCommand(String command, SynthState& state) {
         // Stop notes from previous mode when changing via GUI
         if (state.boogieCurrentMidiNote != -1) { DEBUG_VERBOSE(CAT_MIDI, "Stopping Boogie note on mode change (GUI)"); sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0); state.boogieCurrentMidiNote = -1; state.boogieTriggerButton = -1; state.boogieCurrentSlotIndex = -1; }
         if (state.lastRhythmicMidiNote != -1) { DEBUG_VERBOSE(CAT_MIDI, "Stopping Rhythmic note on mode change (GUI)"); sendMidiNoteOff(state.lastRhythmicMidiNote, 0, MIDI_CHANNEL); stopNote(0); state.lastRhythmicMidiNote = -1; }
+    } else if (strncmp(command.c_str(), "set mode ", 9) == 0) {
+        int modeVal = atoi(command.c_str() + 9);
+        if (modeVal >= 0 && modeVal < NUM_SCALES) { // Use NUM_SCALES defined in synth.h
+            state.scaleMode = modeVal;
+            state.needsScaleUpdate = true; // Trigger scale recalculation
+            Serial.printf("COMMAND: Scale Mode set to %d\n", state.scaleMode);
+            DEBUG_INFO(CAT_COMMAND, "Scale mode command: Set to %d", state.scaleMode);
+        } else {
+            Serial.printf("ERROR: Invalid scale mode value %d (Valid: 0-%d)\n", modeVal, NUM_SCALES - 1);
+            DEBUG_WARNING(CAT_COMMAND, "Scale mode command: Invalid value %d", modeVal);
+        }
+        state.commandJustExecuted = true;
     } else {
         DEBUG_WARNING(CAT_COMMAND, "Unknown command: %s", command.c_str());
     }

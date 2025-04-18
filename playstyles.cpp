@@ -43,12 +43,12 @@ const int thunderstruckMidiNotes[MAX_NOTE_BUTTONS] = {
     80  // BTN_X -> G#
 };
 
-// --- Variable Duration 8th Note Boogie Mode --- V12.6 (Swing Timing)
+// --- Variable Duration 8th Note Boogie Mode --- V12.7 (L+R Triplets)
 void handleBoogieTiming(SynthState& state) {
     // --- Basic Setup & Tempo Check --- 
     if (!state.tempoEstablished || state.usPerMidiTick <= 0) { 
         if (state.boogieCurrentMidiNote != -1) { /* Stop Note & Reset */
-            DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6 Stop: Tempo not established/invalid.");
+            DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.7 Stop: Tempo not established/invalid.");
             sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0);
             state.boogieCurrentMidiNote = -1; state.boogieTriggerButton = -1; state.boogieCurrentSlotIndex = -1; state.boogieNoteStopTimeMicros = 0; state.boogieInternalBeatStartTimeMicros = 0;
         }
@@ -61,199 +61,227 @@ void handleBoogieTiming(SynthState& state) {
     bool clockJustStarted = state.midiSyncEnabled && !state.prevMidiSyncEnabled;
 
     if (clockJustStopped) {
-        DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6: Clock stopped. Switching to Internal Trigger mode.");
+        DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.7: Clock stopped. Switching to Internal Trigger mode.");
         if (state.boogieCurrentMidiNote != -1) { sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0); }
-        state.boogieCurrentMidiNote = -1; state.boogieTriggerButton = -1; state.boogieCurrentSlotIndex = -1; state.boogieNoteStopTimeMicros = 0; // Reset stop time
+        state.boogieCurrentMidiNote = -1; state.boogieTriggerButton = -1; state.boogieCurrentSlotIndex = -1; state.boogieNoteStopTimeMicros = 0; 
     }
     if (clockJustStarted) {
-         DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6: Clock started. Switching to External Sync mode.");
+         DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.7: Clock started. Switching to External Sync mode.");
          if (state.boogieCurrentMidiNote != -1) { sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0); }
          state.boogieCurrentMidiNote = -1; state.boogieTriggerButton = -1; state.boogieCurrentSlotIndex = -1; state.boogieNoteStopTimeMicros = 0;
     }
 
-    // --- Calculate Core & Swing Timings --- 
+    // --- Calculate Core Timing --- 
     float quarterNoteDurationMicros = state.usPerMidiTick * 24.0f;
     if (quarterNoteDurationMicros <= 0) return; // Safety check
-    float eighthNoteNominalDuration = quarterNoteDurationMicros / 2.0f;
 
-    // Calculate Swing Delay (Max delay is Q/6)
-    float swingDelayMicros = state.swingAmount * (quarterNoteDurationMicros / 6.0f);
-
-    // Calculate absolute start times (relative to beat start) for each slot
-    unsigned long slot0StartTimeRel = 0; 
-    unsigned long slot1StartTimeRel = (unsigned long)(eighthNoteNominalDuration + swingDelayMicros);
-
-    // Calculate intended note durations (can be refined later)
-    // For now, assume 50% duration ratio for simplicity in stop calculation
-    unsigned long note0IntendedDuration = (unsigned long)(eighthNoteNominalDuration * 0.5f); 
-    unsigned long note1IntendedDuration = (unsigned long)(eighthNoteNominalDuration * 0.5f); 
-
-    // Calculate absolute stop times (relative to beat start)
-    unsigned long slot0StopTimeRel = min(note0IntendedDuration, slot1StartTimeRel); 
-    unsigned long slot1StopTimeRel = min(slot1StartTimeRel + note1IntendedDuration, (unsigned long)quarterNoteDurationMicros);
-
-    // --- Get Input & Prioritized Note --- (Same as V12.5)
+    // --- Get Input & Prioritized Note --- (Needed early for trigger logic)
     int newlyPressedButton = -1;
     for (int i = 0; i < MAX_NOTE_BUTTONS; ++i) { if (state.pressed[i]) { newlyPressedButton = i; break; } }
     int prioritizedBaseMidiNote = getBaseMidiNote(state);
 
-
-    // --- Determine Beat Reference Time --- 
+    // --- Determine Beat Reference Time --- (Needed early for trigger logic)
     unsigned long currentBeatRefTimeMicros = 0;
-    unsigned long elapsedInCurrentBeat = 0;
     if (state.midiSyncEnabled) {
-        // External Sync Mode: Reference is state.beatStartTimeMicros
         currentBeatRefTimeMicros = state.beatStartTimeMicros;
-        elapsedInCurrentBeat = nowMicros - currentBeatRefTimeMicros;
-        // Handle beat rollover for elapsed time calculation
-        elapsedInCurrentBeat = elapsedInCurrentBeat % (unsigned long)quarterNoteDurationMicros;
-
     } else if (state.boogieTriggerButton != -1) {
-        // Internal Trigger Mode (Sequence Active): Reference is internal start time
         currentBeatRefTimeMicros = state.boogieInternalBeatStartTimeMicros;
-        elapsedInCurrentBeat = nowMicros - currentBeatRefTimeMicros;
-        // Handle beat rollover for elapsed time calculation
-        elapsedInCurrentBeat = elapsedInCurrentBeat % (unsigned long)quarterNoteDurationMicros;
-    } else {
-         // Internal Trigger Mode (Sequence Inactive) or Error
-         // No beat reference until button press
-    }
+    } // Else: 0 if inactive internal mode
 
-    // --- Handle Immediate Mute Press (NEW) ---
-    // Check if L/R press should immediately stop a playing note
-    if (state.boogieCurrentMidiNote != -1) { // Only if a note is playing
-        if (state.pressed[BTN_L] && state.boogieCurrentSlotIndex == 0) {
-            // L pressed while Slot 0 note is playing
-            DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie Mute Stop: L pressed, stopping Slot 0 note %d", state.boogieCurrentMidiNote);
-            sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL);
-            stopNote(0);
-            state.boogieCurrentMidiNote = -1;
-            state.boogieCurrentSlotIndex = -1; // Mark as silent/slot ended
-        } else if (state.pressed[BTN_R] && state.boogieCurrentSlotIndex == 1) {
-            // R pressed while Slot 1 note is playing
-            DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie Mute Stop: R pressed, stopping Slot 1 note %d", state.boogieCurrentMidiNote);
-            sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL);
-            stopNote(0);
-            state.boogieCurrentMidiNote = -1;
-            state.boogieCurrentSlotIndex = -1; // Mark as silent/slot ended
-        }
-    }
-
-    // --- Combined Note On/Off Logic --- 
-
-    // 1. Handle Note Off
-    if (state.boogieCurrentMidiNote != -1 && currentBeatRefTimeMicros != 0) { // If note is playing and beat ref is valid
-        unsigned long currentNoteAbsStopTime = currentBeatRefTimeMicros + 
-                                             ((state.boogieCurrentSlotIndex == 0) ? slot0StopTimeRel : slot1StopTimeRel);
-        // Add rollover handling if needed - compare absolute times
-        unsigned long beatNumPlaying = (state.boogieNoteStartTimeMicros - currentBeatRefTimeMicros) / (unsigned long)quarterNoteDurationMicros; // Estimate beat # note started on
-        currentNoteAbsStopTime = currentBeatRefTimeMicros + (beatNumPlaying * (unsigned long)quarterNoteDurationMicros) + ((state.boogieCurrentSlotIndex == 0) ? slot0StopTimeRel : slot1StopTimeRel);
-
-
-        if (nowMicros >= currentNoteAbsStopTime) {
-            DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie V12.6 Note Stop: Slot %d, Note %d", state.boogieCurrentSlotIndex, state.boogieCurrentMidiNote);
-            sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL);
-            stopNote(0);
-            state.boogieCurrentMidiNote = -1;
-            // Keep state.boogieCurrentSlotIndex to know which slot just ended? No, reset it.
-            state.boogieCurrentSlotIndex = -1; 
-        }
-    }
-
-    // 2. Handle Sequence Stop/Start Trigger (Button Presses/Releases)
+    // --- Handle Sequence Stop/Start Trigger (Button Presses/Releases) --- (Logic is independent of rhythm type)
     if (state.midiSyncEnabled) {
-        // --- External Sync Mode --- 
-        if (state.boogieTriggerButton != -1 && prioritizedBaseMidiNote == -1) { // Button released
-             DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6 Ext Stop: No Button Held");
-             if (state.boogieCurrentMidiNote != -1) { 
-                 DEBUG_VERBOSE(CAT_MIDI, "[Ext Stop Trigger]: Sending immediate Note Off for %d", state.boogieCurrentMidiNote);
-                 sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL);
-                 stopNote(0);
-                 state.boogieCurrentMidiNote = -1;
-                 state.boogieCurrentSlotIndex = -1;
-             }
-             state.boogieTriggerButton = -1; // Stop sequence trigger
-        } else if (state.boogieTriggerButton == -1 && newlyPressedButton != -1 && prioritizedBaseMidiNote != -1) { // New button press
-            DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6 Ext Start Trigger");
-            state.boogieTriggerButton = newlyPressedButton; // Start sequence trigger
-            // Note will be played by Note On logic below if appropriate
+        // External Sync Mode Trigger/Stop
+        if (state.boogieTriggerButton != -1 && prioritizedBaseMidiNote == -1) { 
+             DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.7 Ext Stop Trigger: No Button Held");
+             if (state.boogieCurrentMidiNote != -1) { sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0); state.boogieCurrentMidiNote = -1; state.boogieCurrentSlotIndex = -1; }
+             state.boogieTriggerButton = -1; 
+        } else if (state.boogieTriggerButton == -1 && newlyPressedButton != -1 && prioritizedBaseMidiNote != -1) {
+            DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.7 Ext Start Trigger");
+            state.boogieTriggerButton = newlyPressedButton; 
         }
     } else {
-        // --- Internal Trigger Mode --- 
-         if (state.boogieTriggerButton != -1 && prioritizedBaseMidiNote == -1) { // Button released
-             DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6 Int Stop: No Button Held");
-             if (state.boogieCurrentMidiNote != -1) { 
-                 DEBUG_VERBOSE(CAT_MIDI, "[Int Stop Trigger]: Sending immediate Note Off for %d", state.boogieCurrentMidiNote);
-                 sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL);
-                 stopNote(0);
-                 state.boogieCurrentMidiNote = -1;
-                 state.boogieCurrentSlotIndex = -1;
-             }
-             state.boogieTriggerButton = -1; // Stop sequence trigger
-             state.boogieInternalBeatStartTimeMicros = 0; // Reset internal beat ref
-        } else if (state.boogieTriggerButton == -1 && newlyPressedButton != -1 && prioritizedBaseMidiNote != -1) { // New button press
-            DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.6 Int Start Trigger @ %lu", nowMicros);
-            state.boogieTriggerButton = newlyPressedButton; // Start sequence
-            state.boogieInternalBeatStartTimeMicros = nowMicros; // *** THIS IS THE ONE ***
+        // Internal Trigger Mode Trigger/Stop
+         if (state.boogieTriggerButton != -1 && prioritizedBaseMidiNote == -1) {
+             DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.7 Int Stop Trigger: No Button Held");
+             if (state.boogieCurrentMidiNote != -1) { sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0); state.boogieCurrentMidiNote = -1; state.boogieCurrentSlotIndex = -1; }
+             state.boogieTriggerButton = -1; 
+             state.boogieInternalBeatStartTimeMicros = 0; 
+        } else if (state.boogieTriggerButton == -1 && newlyPressedButton != -1 && prioritizedBaseMidiNote != -1) {
+            DEBUG_INFO(CAT_PLAYSTYLE, "Boogie V12.7 Int Start Trigger @ %lu", nowMicros);
+            state.boogieTriggerButton = newlyPressedButton; 
+            state.boogieInternalBeatStartTimeMicros = nowMicros; 
             currentBeatRefTimeMicros = state.boogieInternalBeatStartTimeMicros; // Update local ref immediately
-            elapsedInCurrentBeat = 0; // Start at beginning of internal beat
-             // Note will be played by Note On logic below if appropriate
         }
     }
 
-    // 3. Handle Note On
-    // Only attempt if sequence is active AND no note currently playing
-    if (state.boogieTriggerButton != -1 && state.boogieCurrentMidiNote == -1 && currentBeatRefTimeMicros != 0 && prioritizedBaseMidiNote != -1) {
-        int targetSlot = -1;
-        unsigned long targetAbsStartTime = 0;
-        unsigned long targetAbsStopTime = 0;
-        unsigned long beatNumCurrent = (nowMicros - currentBeatRefTimeMicros) / (unsigned long)quarterNoteDurationMicros; // Estimate current beat # 
+    // --- Check if sequence is active before proceeding to rhythm generation ---
+    if (state.boogieTriggerButton == -1 || currentBeatRefTimeMicros == 0 || prioritizedBaseMidiNote == -1) {
+         // If sequence isn't active, or beat ref is invalid, or no note button held, ensure silence if needed and exit
+         if (state.boogieCurrentMidiNote != -1) { // Ensure note off if sequence just stopped
+              DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie V12.7 Stopping lingering note %d as sequence became inactive.", state.boogieCurrentMidiNote);
+              sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0);
+              state.boogieCurrentMidiNote = -1; state.boogieCurrentSlotIndex = -1;
+         }
+         return; // Nothing more to do rhythmically
+    }
+    
+    // === RHYTHM GENERATION === 
+    unsigned long elapsedInCurrentBeat = nowMicros - currentBeatRefTimeMicros;
+    elapsedInCurrentBeat = elapsedInCurrentBeat % (unsigned long)quarterNoteDurationMicros; // Rollover
+    int targetSlot = -1; // Which slot (0,1 for 8ths; 0,1,2 for triplets) should play?
 
-        // --- Read Mute Buttons --- 
-        bool muteSlot0 = state.held[BTN_L];
-        bool muteSlot1 = state.held[BTN_R];
+    // --- Select Mode: Triplets (L+R) or Swing 8ths --- 
+    if (state.held[BTN_L] && state.held[BTN_R]) {
+        // --- TRIPLET MODE --- 
+        DEBUG_DEBUG(CAT_PLAYSTYLE, "[Triplet Mode Active]");
+        float tripletDurationMicros = quarterNoteDurationMicros / 3.0f;
+        unsigned long tripletNoteDuration = (unsigned long)(tripletDurationMicros * 0.5f); // 50% duration
 
-        // Calculate absolute times for logging
-        unsigned long slot0AbsStart = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot0StartTimeRel;
-        unsigned long slot0AbsStop = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot0StopTimeRel;
-        unsigned long slot1AbsStart = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot1StartTimeRel;
-        unsigned long slot1AbsStop = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + slot1StopTimeRel;
+        // Determine current triplet slot
+        int currentTripletSlot = (int)(elapsedInCurrentBeat / tripletDurationMicros); 
+        if (currentTripletSlot < 0) currentTripletSlot = 0; if (currentTripletSlot > 2) currentTripletSlot = 2;
 
-        // --- ADD DEBUG LOGS --- 
-        DEBUG_DEBUG(CAT_PLAYSTYLE, "[Note On Check] Now: %lu, Mute0: %d, Mute1: %d", nowMicros, muteSlot0, muteSlot1);
-        DEBUG_DEBUG(CAT_PLAYSTYLE, "  Slot 0 Window: [%lu, %lu)", slot0AbsStart, slot0AbsStop);
-        DEBUG_DEBUG(CAT_PLAYSTYLE, "  Slot 1 Window: [%lu, %lu)", slot1AbsStart, slot1AbsStop);
-        // --- END DEBUG LOGS ---
+        unsigned long tripletAbsStartTime = currentBeatRefTimeMicros + (unsigned long)(currentTripletSlot * tripletDurationMicros); 
+        unsigned long tripletAbsStopTime = tripletAbsStartTime + tripletNoteDuration;
 
-        // Check if we should play Slot 0
-        // Play Slot 0 only if within window AND NOT muted by L button
-        if (!muteSlot0 && nowMicros >= slot0AbsStart && nowMicros < slot0AbsStop) {
-             targetSlot = 0;
-             targetAbsStartTime = slot0AbsStart;
-             targetAbsStopTime = slot0AbsStop;
+        // 1a. Handle Triplet Note Off (Immediate stop if needed)
+        if (state.boogieCurrentMidiNote != -1) {
+            DEBUG_DEBUG(CAT_PLAYSTYLE, "[Triplet OFF Check] Note %d playing in Slot %d", state.boogieCurrentMidiNote, state.boogieCurrentSlotIndex); // Add Log 1
+            if (state.boogieCurrentSlotIndex >= 0 && state.boogieCurrentSlotIndex <= 2) { // Simple check if it was a triplet note
+                 float playingTripletDuration = quarterNoteDurationMicros / 3.0f;
+                 unsigned long playingNoteDuration = (unsigned long)(playingTripletDuration * 0.5f);
+                 unsigned long playingTripletAbsStartTime = state.boogieNoteStartTimeMicros; // Time it actually started
+                 unsigned long playingTripletAbsStopTime = playingTripletAbsStartTime + playingNoteDuration; // When it should stop
+                 DEBUG_DEBUG(CAT_PLAYSTYLE, "  [Triplet OFF Check] Triplet note stop check: Now:%lu, StopTime:%lu", nowMicros, playingTripletAbsStopTime); // Add Log 2
+                 if (nowMicros >= playingTripletAbsStopTime) {
+                     DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie Triplet Note Stop: Slot %d, Note %d", state.boogieCurrentSlotIndex, state.boogieCurrentMidiNote);
+                     sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL);
+                     stopNote(0);
+                     state.boogieCurrentMidiNote = -1; // Reset note
+                     state.boogieCurrentSlotIndex = -1; 
+                     DEBUG_DEBUG(CAT_PLAYSTYLE, "  [Triplet OFF Check] Note Stopped. boogieCurrentMidiNote = %d", state.boogieCurrentMidiNote); // Add Log 3
+                 }
+             } else { // Note was from 8th note mode, stop it immediately
+                  DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie Triplet Mode: Stopping lingering 8th note %d", state.boogieCurrentMidiNote);
+                  sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0);
+                  state.boogieCurrentMidiNote = -1; // Reset note
+                  state.boogieCurrentSlotIndex = -1; 
+                  DEBUG_DEBUG(CAT_PLAYSTYLE, "  [Triplet OFF Check] Lingering 8th Note Stopped. boogieCurrentMidiNote = %d", state.boogieCurrentMidiNote); // Add Log 4
+             }
         }
-        
-        // Check if we should play Slot 1 (only if Slot 0 didn't match)
-        if (targetSlot == -1) {
-            // Play Slot 1 only if within window AND NOT muted by R button
-            if (!muteSlot1 && nowMicros >= slot1AbsStart && nowMicros < slot1AbsStop) {
-                 targetSlot = 1;
-                 targetAbsStartTime = slot1AbsStart;
-                 targetAbsStopTime = slot1AbsStop;
+
+        // 3a. Handle Triplet Note On 
+        if (state.boogieCurrentMidiNote == -1) { // Only if silent
+            // Check if now is within the current triplet slot's play window
+            DEBUG_DEBUG(CAT_PLAYSTYLE, "[Triplet ON Check] Now:%lu, Slot:%d, Start:%lu, Stop:%lu", nowMicros, currentTripletSlot, tripletAbsStartTime, tripletAbsStopTime);
+            if (nowMicros >= tripletAbsStartTime && nowMicros < tripletAbsStopTime) {
+                targetSlot = currentTripletSlot; // Mark that we want to play this triplet slot
             }
         }
 
-        // If a target slot was found, play the note
-        if (targetSlot != -1) {
-            int targetNote = prioritizedBaseMidiNote - 24; if (targetNote < 0) targetNote = 0; if (targetNote > 127) targetNote = 127;
-            DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie V12.6 Note Start: Slot %d, Note %d, Stop @ %lu", targetSlot, targetNote, targetAbsStopTime);
-            playNote(state, 0, targetNote);
-            sendMidiNoteOn(targetNote, MIDI_VELOCITY, MIDI_CHANNEL);
-            state.boogieCurrentMidiNote = targetNote;
-            state.boogieCurrentSlotIndex = targetSlot;
-            state.boogieNoteStartTimeMicros = targetAbsStartTime; // Store actual start time for reference
-            state.boogieNoteStopTimeMicros = targetAbsStopTime; // Store calculated stop time for simple check (might be redundant now)
+    } else {
+        // --- SWING 8TH NOTE MODE --- 
+        float eighthNoteNominalDuration = quarterNoteDurationMicros / 2.0f;
+        float swingDelayMicros = state.swingAmount * (quarterNoteDurationMicros / 6.0f);
+        unsigned long slot0StartTimeRel = 0; 
+        unsigned long slot1StartTimeRel = (unsigned long)(eighthNoteNominalDuration + swingDelayMicros);
+        unsigned long note0IntendedDuration = (unsigned long)(eighthNoteNominalDuration * 0.5f); 
+        unsigned long note1IntendedDuration = (unsigned long)(eighthNoteNominalDuration * 0.5f); 
+        unsigned long slot0StopTimeRel = min(note0IntendedDuration, slot1StartTimeRel); 
+        unsigned long slot1StopTimeRel = min(slot1StartTimeRel + note1IntendedDuration, (unsigned long)quarterNoteDurationMicros);
+
+        // 1b. Handle Immediate Mute Press Stops
+        if (state.boogieCurrentMidiNote != -1) { 
+            if (state.pressed[BTN_L] && state.boogieCurrentSlotIndex == 0) {
+                DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie Mute Stop: L pressed, stopping Slot 0 note %d", state.boogieCurrentMidiNote);
+                sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0);
+                state.boogieCurrentMidiNote = -1; state.boogieCurrentSlotIndex = -1; 
+            } else if (state.pressed[BTN_R] && state.boogieCurrentSlotIndex == 1) {
+                DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie Mute Stop: R pressed, stopping Slot 1 note %d", state.boogieCurrentMidiNote);
+                sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL); stopNote(0);
+                state.boogieCurrentMidiNote = -1; state.boogieCurrentSlotIndex = -1; 
+            }
         }
+
+        // 2b. Handle Scheduled Note Off (Only if not already stopped by mute)
+        if (state.boogieCurrentMidiNote != -1) { 
+             // Need absolute stop time relative to the beat the note started on
+             unsigned long beatNumPlaying = (state.boogieNoteStartTimeMicros - currentBeatRefTimeMicros) / (unsigned long)quarterNoteDurationMicros; 
+             unsigned long currentNoteAbsStopTime = currentBeatRefTimeMicros + (beatNumPlaying * (unsigned long)quarterNoteDurationMicros) + 
+                                                  ((state.boogieCurrentSlotIndex == 0) ? slot0StopTimeRel : slot1StopTimeRel);
+
+            if (nowMicros >= currentNoteAbsStopTime) {
+                DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie 8th Note Stop: Slot %d, Note %d", state.boogieCurrentSlotIndex, state.boogieCurrentMidiNote);
+                sendMidiNoteOff(state.boogieCurrentMidiNote, 0, MIDI_CHANNEL);
+                stopNote(0);
+                state.boogieCurrentMidiNote = -1;
+                state.boogieCurrentSlotIndex = -1; 
+            }
+        }
+
+        // 3b. Handle 8th Note On 
+        if (state.boogieCurrentMidiNote == -1) { // Only if silent
+            bool muteSlot0 = state.held[BTN_L];
+            bool muteSlot1 = state.held[BTN_R];
+            unsigned long slot0AbsStart = currentBeatRefTimeMicros + slot0StartTimeRel;
+            unsigned long slot0AbsStop = currentBeatRefTimeMicros + slot0StopTimeRel;
+            unsigned long slot1AbsStart = currentBeatRefTimeMicros + slot1StartTimeRel;
+            unsigned long slot1AbsStop = currentBeatRefTimeMicros + slot1StopTimeRel;
+            
+            // Adjust for current beat rollover if beatRefTime is old
+             unsigned long beatNumCurrent = (nowMicros - currentBeatRefTimeMicros) / (unsigned long)quarterNoteDurationMicros;
+             slot0AbsStart += (beatNumCurrent * (unsigned long)quarterNoteDurationMicros);
+             slot0AbsStop += (beatNumCurrent * (unsigned long)quarterNoteDurationMicros);
+             slot1AbsStart += (beatNumCurrent * (unsigned long)quarterNoteDurationMicros);
+             slot1AbsStop += (beatNumCurrent * (unsigned long)quarterNoteDurationMicros);
+
+            // Check Slot 0
+            if (!muteSlot0 && nowMicros >= slot0AbsStart && nowMicros < slot0AbsStop) {
+                 targetSlot = 0;
+            }
+            // Check Slot 1
+            if (targetSlot == -1 && !muteSlot1 && nowMicros >= slot1AbsStart && nowMicros < slot1AbsStop) {
+                 targetSlot = 1;
+            }
+        }
+    } // End of Swing 8th Note Mode
+
+
+    // --- Play Note if Target Slot Determined --- 
+    if (targetSlot != -1) {
+        int targetNote = prioritizedBaseMidiNote - 24; if (targetNote < 0) targetNote = 0; if (targetNote > 127) targetNote = 127;
+        unsigned long targetAbsStopTime; // Recalculate based on target slot for clarity
+        if (state.held[BTN_L] && state.held[BTN_R]) { // Triplet timings
+            float tripletDurationMicros = quarterNoteDurationMicros / 3.0f;
+            unsigned long tripletNoteDuration = (unsigned long)(tripletDurationMicros * 0.5f);
+             unsigned long beatNumCurrent = (nowMicros - currentBeatRefTimeMicros) / (unsigned long)quarterNoteDurationMicros;
+            unsigned long targetAbsStartTime = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + (unsigned long)(targetSlot * tripletDurationMicros);
+             targetAbsStopTime = targetAbsStartTime + tripletNoteDuration;
+             DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie Triplet Note Start: Slot %d, Note %d, Stop @ %lu", targetSlot, targetNote, targetAbsStopTime);
+              state.boogieNoteStartTimeMicros = targetAbsStartTime; // Store actual start time
+        } else { // 8th note timings
+             float eighthNoteNominalDuration = quarterNoteDurationMicros / 2.0f;
+             float swingDelayMicros = state.swingAmount * (quarterNoteDurationMicros / 6.0f);
+             unsigned long slot0StartTimeRel = 0; 
+             unsigned long slot1StartTimeRel = (unsigned long)(eighthNoteNominalDuration + swingDelayMicros);
+             unsigned long note0IntendedDuration = (unsigned long)(eighthNoteNominalDuration * 0.5f); 
+             unsigned long note1IntendedDuration = (unsigned long)(eighthNoteNominalDuration * 0.5f); 
+             unsigned long slot0StopTimeRel = min(note0IntendedDuration, slot1StartTimeRel); 
+             unsigned long slot1StopTimeRel = min(slot1StartTimeRel + note1IntendedDuration, (unsigned long)quarterNoteDurationMicros);
+             unsigned long beatNumCurrent = (nowMicros - currentBeatRefTimeMicros) / (unsigned long)quarterNoteDurationMicros;
+             unsigned long targetAbsStartTime = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + 
+                                             ((targetSlot == 0) ? slot0StartTimeRel : slot1StartTimeRel);
+             targetAbsStopTime = currentBeatRefTimeMicros + (beatNumCurrent * (unsigned long)quarterNoteDurationMicros) + 
+                                             ((targetSlot == 0) ? slot0StopTimeRel : slot1StopTimeRel);
+            DEBUG_VERBOSE(CAT_PLAYSTYLE, "Boogie 8th Note Start: Slot %d, Note %d, Stop @ %lu", targetSlot, targetNote, targetAbsStopTime);
+             state.boogieNoteStartTimeMicros = targetAbsStartTime; // Store actual start time
+        }
+
+        playNote(state, 0, targetNote);
+        sendMidiNoteOn(targetNote, MIDI_VELOCITY, MIDI_CHANNEL);
+        state.boogieCurrentMidiNote = targetNote;
+        state.boogieCurrentSlotIndex = targetSlot; // Use targetSlot (0,1, or 2)
+        state.boogieNoteStopTimeMicros = targetAbsStopTime; // Store calculated stop time
     }
 }
 

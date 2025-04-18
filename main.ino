@@ -88,6 +88,11 @@ void loop() {
     // Update button states
     buttonState(state);
     
+    // --- Update Scale if Needed --- 
+    if (state.needsScaleUpdate) {
+        updateScale(state); // Update state.scaleHolder based on state.scaleMode
+    }
+    
     // --- Handle High-Resolution Rhythmic Timing --- 
     // Run if Rhythmic mode is ON and tempo is available (live clock OR established)
     if (state.rhythmicModeEnabled && (state.midiSyncEnabled || state.tempoEstablished)) {
