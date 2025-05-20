@@ -122,5 +122,3 @@ A brief overview of the key source files:
 Contributions, issues, and feature requests are welcome.
 
 ## License
-
-*(Consider adding a license)* 
